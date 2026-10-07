@@ -1,0 +1,39 @@
+{
+  "name": "cortico-world-overcooked2",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Cortico World for Overcooked! 2 local co-op: the bot joins as a second local player through a BepInEx plugin and plays next to the operator",
+  "license": "MIT",
+  "keywords": [
+    "cortico-world",
+    "cortico"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "main": "./src/index.ts",
+  "cortico": {
+    "kind": "world",
+    "api": 5,
+    "displayName": "胡闹厨房 2"
+  },
+  "files": [
+    "src",
+    "plugin/*.cs",
+    "plugin/*.csproj",
+    "docs",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "build:plugin": "sh scripts/build-plugin.sh"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "cortico": "^0.1.5",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

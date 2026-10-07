@@ -1,0 +1,475 @@
+{
+ "frame": 102902,
+ "at": 153.713,
+ "scene": "s_sushi_1_3",
+ "joined": true,
+ "paused": false,
+ "level": "Sushi_1_3_2P",
+ "phase": "round",
+ "timeLeft": 153.989,
+ "score": {
+  "total": 0,
+  "deliveries": 0,
+  "failed": 0,
+  "base": 0,
+  "tips": 0,
+  "expired": 0
+ },
+ "orders": [
+  {
+   "id": 1,
+   "dish": "Sushi_PlainPrawn",
+   "parts": [
+    "SushiPrawn"
+   ],
+   "remaining": 103.993,
+   "lifetime": 130
+  },
+  {
+   "id": 2,
+   "dish": "Sushi_Cucumber",
+   "parts": [
+    "Seaweed",
+    "SushiRice:done",
+    "Cucumber"
+   ],
+   "remaining": 104.002,
+   "lifetime": 130
+  },
+  {
+   "id": 3,
+   "dish": "Sushi_PlainPrawn",
+   "parts": [
+    "SushiPrawn"
+   ],
+   "remaining": 114.005,
+   "lifetime": 130
+  },
+  {
+   "id": 4,
+   "dish": "Sushi_PlainPrawn",
+   "parts": [
+    "SushiPrawn"
+   ],
+   "remaining": 124.006,
+   "lifetime": 130
+  }
+ ],
+ "chefs": [
+  {
+   "id": 631428,
+   "role": "partner",
+   "name": "Player 1",
+   "cell": [
+    -2,
+    0
+   ],
+   "pos": [
+    -1.595,
+    0.388
+   ],
+   "facing": [
+    0,
+    -1
+   ]
+  },
+  {
+   "id": 633422,
+   "role": "bot",
+   "name": "Player 2",
+   "cell": [
+    2,
+    0
+   ],
+   "pos": [
+    1.718,
+    0
+   ],
+   "facing": [
+    0.691,
+    -0.723
+   ]
+  }
+ ],
+ "stations": [
+  {
+   "id": 632528,
+   "kind": "board",
+   "name": "countertop_01_chopping_board_wood_no_edge",
+   "cell": [
+    -1,
+    2
+   ]
+  },
+  {
+   "id": 634536,
+   "kind": "board",
+   "name": "countertop_01_chopping_board_wood_no_edge",
+   "cell": [
+    -3,
+    2
+   ]
+  },
+  {
+   "id": 632790,
+   "kind": "board",
+   "name": "countertop_01_chopping_board_wood_no_edge",
+   "cell": [
+    -5,
+    2
+   ]
+  },
+  {
+   "id": 634928,
+   "kind": "crate",
+   "name": "DispenserCrate 3",
+   "cell": [
+    -6,
+    0
+   ],
+   "gives": "SushiRice"
+  },
+  {
+   "id": 634442,
+   "kind": "crate",
+   "name": "DispenserCrate 3",
+   "cell": [
+    -6,
+    -2
+   ],
+   "gives": "Seaweed"
+  },
+  {
+   "id": 632468,
+   "kind": "drying",
+   "name": "DryingPart",
+   "cell": [
+    3,
+    -4
+   ]
+  },
+  {
+   "id": 630930,
+   "kind": "sink",
+   "name": "WashingPart",
+   "cell": [
+    4,
+    -4
+   ],
+   "plates": 0
+  },
+  {
+   "id": 631822,
+   "kind": "return",
+   "name": "workstation_plate_return",
+   "cell": [
+    5,
+    -4
+   ]
+  },
+  {
+   "id": 633164,
+   "kind": "bin",
+   "name": "workstation_bin_01",
+   "cell": [
+    0,
+    -4
+   ]
+  },
+  {
+   "id": 631048,
+   "kind": "crate",
+   "name": "DispenserCrate 3",
+   "cell": [
+    -6,
+    -1
+   ],
+   "gives": "SushiPrawn"
+  },
+  {
+   "id": 632368,
+   "kind": "crate",
+   "name": "DispenserCrate 3",
+   "cell": [
+    7,
+    0
+   ],
+   "gives": "Cucumber"
+  },
+  {
+   "id": 634548,
+   "kind": "pass",
+   "name": "workstation_plate_station",
+   "cell": [
+    -6,
+    -3
+   ]
+  },
+  {
+   "id": 634424,
+   "kind": "counter",
+   "name": "countertop_01_standard_wood",
+   "cell": [
+    0,
+    2
+   ]
+  },
+  {
+   "id": 630618,
+   "kind": "counter",
+   "name": "countertop_01_standard_wood",
+   "cell": [
+    0,
+    1
+   ]
+  },
+  {
+   "id": 631752,
+   "kind": "counter",
+   "name": "countertop_01_standard_wood",
+   "cell": [
+    0,
+    0
+   ],
+   "item": {
+    "id": -27474,
+    "chop": 0,
+    "kind": "ingredient",
+    "name": "Cucumber"
+   }
+  },
+  {
+   "id": 631090,
+   "kind": "counter",
+   "name": "countertop_01_standard_wood",
+   "cell": [
+    0,
+    -1
+   ]
+  },
+  {
+   "id": 633794,
+   "kind": "counter",
+   "name": "countertop_01_standard_wood",
+   "cell": [
+    0,
+    -2
+   ]
+  },
+  {
+   "id": 630952,
+   "kind": "counter",
+   "name": "countertop_01_standard_wood",
+   "cell": [
+    0,
+    -3
+   ]
+  },
+  {
+   "id": 632258,
+   "kind": "counter",
+   "name": "countertop_01_standard_wood",
+   "cell": [
+    -6,
+    1
+   ]
+  },
+  {
+   "id": 631828,
+   "kind": "counter",
+   "name": "countertop_01_standard_wood",
+   "cell": [
+    -4,
+    2
+   ]
+  },
+  {
+   "id": 630992,
+   "kind": "counter",
+   "name": "countertop_01_standard_wood",
+   "cell": [
+    -2,
+    2
+   ]
+  },
+  {
+   "id": 632730,
+   "kind": "counter",
+   "name": "countertop_01_standard_wood",
+   "cell": [
+    7,
+    1
+   ],
+   "item": {
+    "id": 632002,
+    "kind": "plate",
+    "name": "equipment_plate_01",
+    "contents": []
+   }
+  },
+  {
+   "id": 631214,
+   "kind": "counter",
+   "name": "countertop_01_standard_wood",
+   "cell": [
+    7,
+    -2
+   ],
+   "item": {
+    "id": 632318,
+    "kind": "plate",
+    "name": "equipment_plate_01",
+    "contents": []
+   }
+  },
+  {
+   "id": 633568,
+   "kind": "counter",
+   "name": "countertop_01_standard_wood",
+   "cell": [
+    7,
+    -3
+   ]
+  },
+  {
+   "id": 632894,
+   "kind": "counter",
+   "name": "countertop_01_standard_wood",
+   "cell": [
+    7,
+    -1
+   ]
+  },
+  {
+   "id": 634106,
+   "kind": "counter",
+   "name": "countertop_01_standard_wood",
+   "cell": [
+    -3,
+    -3
+   ],
+   "item": {
+    "id": 632972,
+    "kind": "plate",
+    "name": "equipment_plate_01",
+    "contents": []
+   }
+  },
+  {
+   "id": 633176,
+   "kind": "counter",
+   "name": "countertop_01_standard_wood",
+   "cell": [
+    -3,
+    -1
+   ],
+   "item": {
+    "id": 631316,
+    "kind": "plate",
+    "name": "equipment_plate_01",
+    "contents": []
+   }
+  },
+  {
+   "id": 634330,
+   "kind": "counter",
+   "name": "countertop_01_standard_wood",
+   "cell": [
+    -3,
+    -2
+   ]
+  },
+  {
+   "id": 632740,
+   "kind": "counter",
+   "name": "countertop_01_standard_wood",
+   "cell": [
+    3,
+    3
+   ],
+   "item": {
+    "id": 630870,
+    "kind": "extinguisher",
+    "name": "utensil_fire_extinguisher_01"
+   }
+  },
+  {
+   "id": 632870,
+   "kind": "counter",
+   "name": "countertop_01_standard_wood",
+   "cell": [
+    7,
+    2
+   ]
+  },
+  {
+   "id": 633242,
+   "kind": "stove",
+   "name": "workstation_cooker_01",
+   "cell": [
+    6,
+    3
+   ],
+   "item": {
+    "id": 632328,
+    "kind": "pot",
+    "name": "utensil_pot_01",
+    "cook": "raw",
+    "cookProgress": 0,
+    "contents": []
+   }
+  },
+  {
+   "id": 634146,
+   "kind": "stove",
+   "name": "workstation_cooker_01",
+   "cell": [
+    5,
+    3
+   ],
+   "item": {
+    "id": 631462,
+    "kind": "pot",
+    "name": "utensil_pot_01",
+    "cook": "raw",
+    "cookProgress": 0,
+    "contents": []
+   }
+  },
+  {
+   "id": 634558,
+   "kind": "stove",
+   "name": "workstation_cooker_01",
+   "cell": [
+    4,
+    3
+   ],
+   "item": {
+    "id": 633562,
+    "kind": "pot",
+    "name": "utensil_pot_01",
+    "cook": "raw",
+    "cookProgress": 0,
+    "contents": []
+   }
+  }
+ ],
+ "loose": [],
+ "layout": {
+  "minX": -7,
+  "maxX": 7,
+  "minZ": -4,
+  "maxZ": 4,
+  "rows": [
+   "...............",
+   "..........#####",
+   ".#######......#",
+   ".#.....#......#",
+   ".#.....#......#",
+   ".#..#..#......#",
+   ".#..#..#......#",
+   "....#..#......#",
+   ".......#..###.."
+  ]
+ }
+}
