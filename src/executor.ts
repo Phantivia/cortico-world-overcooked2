@@ -1,7 +1,9 @@
 /**
  * bot 厨师的任务队列：任务按序执行，每步交给插件做完再回执。一步失败即整个任务受阻，后面的任务
- * 照常继续（下一个任务的第一步会基于新状态重新判断）。replace 先取消全部再排入；取消要等插件确认
- * 按键已松开、正在执行的那一步已回复。
+ * 照常继续（下一个任务的第一步会基于新状态重新判断）。
+ *
+ * 排法：replace 撤掉还没开始的任务，正在做的做完；append 排到最后；now 叫停正在做的并排到最前。
+ * 另可按任务号撤掉指定任务。叫停正在做的任务要等插件确认按键已松开、那一步已回复。
  */
 
 export interface StepResult {
@@ -14,6 +16,14 @@ export interface TaskReport {
   id: number;
   kind: 'done' | 'blocked' | 'cancelled';
   text: string;
+}
+
+export type QueueMode = 'replace' | 'append' | 'now';
+
+export interface Submitted {
+  id: number;
+  /** 这次排入顺带撤掉或叫停了什么、正在做的任务怎么处理，每项一句。 */
+  notes: string[];
 }
 
 export interface Step {
@@ -58,14 +68,52 @@ export class Executor {
     return !this.running && this.queue.length === 0;
   }
 
-  /** 排入任务，返回任务号。replace 先取消正在做的和排着的。 */
-  async submit(steps: Step[], mode: 'append' | 'replace'): Promise<number> {
+  /** 排入任务。cancel 里的任务号先撤掉；撤不到的号（已结束）不算错。 */
+  async submit(steps: Step[], mode: QueueMode, cancel: readonly number[] = []): Promise<Submitted> {
     if (this.stopped) throw new Error('游戏未连接');
-    if (mode === 'replace') await this.cancel('被新任务替换');
     const task: Task = { id: this.nextId++, steps, done: 0, results: [], queuedAt: this.now() };
-    this.queue.push(task);
+    const notes: string[] = [];
+    const ids = new Set(cancel);
+    const dropped = this.queue.filter(t => ids.has(t.id) || mode === 'replace');
+    this.queue = this.queue.filter(t => !dropped.includes(t));
+    for (const t of dropped) this.deps.report({ id: t.id, kind: 'cancelled', text: this.cancelText(t, ids.has(t.id) ? `被任务#${task.id}撤掉` : `被任务#${task.id}替换`) });
+    if (dropped.length) notes.push(`撤掉了还没开始的${dropped.map(t => `任务#${t.id}`).join('、')}`);
+    if (mode === 'now') this.queue.unshift(task);
+    else this.queue.push(task);
+    const running = this.running;
+    if (running && (mode === 'now' || ids.has(running.id))) {
+      notes.push(`叫停了正在做的任务#${running.id}`);
+      await this.interrupt(mode === 'now' ? `被插队的任务#${task.id}叫停` : `被任务#${task.id}撤掉`);
+    } else if (running) {
+      notes.push(`正在做的任务#${running.id}会做完（现在第 ${running.done + 1}/${running.steps.length} 步），任务#${task.id}排在它后面；要马上换成新的就用 now`);
+    }
     this.kick();
-    return task.id;
+    return { id: task.id, notes };
+  }
+
+  /** 撤掉一个任务；正在做的就叫停。返回一句结果。 */
+  async cancelTask(id: number, reason: string): Promise<string> {
+    if (this.running?.id === id) {
+      await this.interrupt(reason);
+      return `叫停了任务#${id}`;
+    }
+    const task = this.queue.find(t => t.id === id);
+    if (!task) return `任务#${id} 已经结束或不在队列里`;
+    this.queue = this.queue.filter(t => t !== task);
+    this.deps.report({ id, kind: 'cancelled', text: this.cancelText(task, reason) });
+    return `撤掉了任务#${id}`;
+  }
+
+  /** 叫停正在做的那一步；执行循环报告取消后接着做队列里的下一个。 */
+  private async interrupt(reason: string): Promise<void> {
+    this.cancelReason = reason;
+    this.controller?.abort();
+    try {
+      // 插件收到 halt 才会回复正在执行的那一步。
+      await this.deps.halt();
+    } catch {
+      // 连接已断时插件在断线处理里自行松开按键，那一步的请求随断线失败。
+    }
   }
 
   /** 取消全部任务；每个被取消的任务各报一次。 */
@@ -74,14 +122,7 @@ export class Executor {
     for (const t of dropped) this.deps.report({ id: t.id, kind: 'cancelled', text: this.cancelText(t, reason) });
     const running = this.running;
     if (running) {
-      this.cancelReason = reason;
-      this.controller?.abort();
-      // 插件收到 halt 才会回复正在执行的那一步，执行循环随之结束。
-      try {
-        await this.deps.halt();
-      } catch {
-        // 连接已断时插件在断线处理里自行松开按键，那一步的请求随断线失败。
-      }
+      await this.interrupt(reason);
       await this.loop;
     }
     return dropped.length + (running ? 1 : 0);

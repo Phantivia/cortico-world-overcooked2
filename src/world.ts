@@ -5,18 +5,23 @@
  * 现状描述是一条延迟渲染的场景事件（piggyback）：bot 读到它的那一刻才按最新一帧渲染，只写比上次
  * 变了的段；换关卡、回合开始、新的上下文窗口和每隔 anchorSec 写一次带地图的完整版。队友的动作攒成
  * 「刚才」轨迹放进这条描述；需要 bot 立刻反应的事（火、锅快糊、任务结果、空闲）单独唤醒。
+ *
+ * bot 的手：oc2_do 把一串步骤排进任务队列（executor.ts），回执带上排的那一刻手里和各目标的样子；
+ * oc2_arm 盯着一个条件，成立时自动排上一串步骤（triggers.ts），反应不用等 bot 再想一轮。
  */
 import { fileURLToPath } from 'node:url';
 import type { BlobInput, ToolDef, ToolOutcome, TriggerMode, World, WorldConsoleDecl, WorldHost } from 'cortico/core/types.ts';
 import { nowIso } from 'cortico/core/util.ts';
 import { GameBridge, type Reply } from './bridge.ts';
 import { OVERCOOKED2_CONFIG_GROUP, type Overcooked2ConfigSection } from './config.ts';
-import { Executor, type TaskReport } from './executor.ts';
+import { Executor, type QueueMode, type TaskReport } from './executor.ts';
 import { burningNow, extinguisherWhere, pushTrail, translate } from './events.ts';
-import { Labels } from './labels.ts';
-import { clock, mapText, nameOf, orderText, segments, stationText, type RenderCtx } from './render.ts';
+import { Labels, locate } from './labels.ts';
+import { chefName, clock, itemText, mapText, nameOf, orderText, segments, stationName, stationText, type RenderCtx } from './render.ts';
+import { cellReachable, chefOf, sides } from './sides.ts';
 import type { GameEvent, GameState } from './state.ts';
-import { describe, parseSteps, pluginStep, stepResult, STEP_SCHEMA, type ParsedStep } from './steps.ts';
+import { describe, parseSteps, pluginStep, resolveFind, stepResult, STEP_SCHEMA, type ParsedStep } from './steps.ts';
+import { CONDITION_SCHEMA, describeCondition, evaluate, parseCondition, Watches, type Watch, type WatchEnd } from './triggers.ts';
 
 const ENV_PROMPT_FILE = fileURLToPath(new URL('./ENV_PROMPT.md', import.meta.url));
 const TAG = '[厨房]';
@@ -28,6 +33,9 @@ const JOIN_RETRY_MS = 3000;
 const LOOK_REPEAT_MS = 15_000;
 const FIRE_GROUP_MS = 800;
 const LAYOUT_ANCHOR_MS = 20_000;
+/** 布局要这么久没再变才算真变了，才补一条带地图的完整现状。 */
+const LAYOUT_STABLE_MS = 6000;
+const QUEUE_MODES = ['replace', 'append', 'now'] as const;
 /** 空闲提醒的重复间隔是首次间隔的这么多倍。 */
 const IDLE_REPEAT = 3;
 
@@ -58,6 +66,11 @@ export class Overcooked2World implements World {
   private joinTried = 0;
   private joinError = '';
   private layoutKey = '';
+  private layoutSince = 0;
+  /** 最近一条完整现状里画的那张地图。 */
+  private anchoredLayout = '';
+  private kitchenKey = '';
+  private readonly watches: Watches;
 
   constructor(private readonly opts: WorldOptions) {
     this.executor = new Executor({
@@ -67,6 +80,11 @@ export class Overcooked2World implements World {
       },
       describe: step => describe(step as ParsedStep, this.state, this.ctx()),
       report: r => this.onTaskReport(r),
+    });
+    this.watches = new Watches({
+      fire: w => this.fireWatch(w),
+      report: (w, end, text) => this.onWatchReport(w, end, text),
+      describe: w => describeCondition(w.when, this.state, this.ctx()),
     });
     this.bridge.on('hello', () => {
       this.lamp = 'online';
@@ -83,6 +101,7 @@ export class Overcooked2World implements World {
       this.lamp = 'loading';
       this.detail = '等待游戏';
       this.state = null;
+      this.watches.clear('游戏连接断开了');
       void this.executor.stop();
       void this.push('connection', '游戏连接断开了；游戏重新开起来后自动重连。', 'flush');
     });
@@ -158,32 +177,57 @@ export class Overcooked2World implements World {
       {
         name: 'oc2_do',
         description:
-          '让我的厨师按顺序做一串动作（排进任务队列，后台执行，做完或卡住时回报）。append 排在已有任务后面；replace 先取消全部再做这个。' +
-          '动作：take 拿起（食材箱、台面、炉灶上的锅、物品）；put 把手里的东西放到/装进目标；serve 上菜到出餐口；chop 切砧板上的东西直到切好；' +
-          'wash 洗水槽里的脏盘子（plates 只数，不写洗完为止）；throw 把手里的食材扔向目标；go 走到目标旁或 x,z 格；' +
-          'wait 等 target 满足 until（cooked 加热好/chopped 切好/item 有东西/empty 空出来/plates 有盘子）或 until=seconds 等 seconds 秒；' +
-          'use 操作开关；extinguish 拿着灭火器灭目标的火。dash=true 路上冲刺。target 写场景描述里的标签。',
+          '让我的厨师按顺序做一串动作，排进任务队列，在后台做，做完或卡住时回报。' +
+          '动作：take 拿起（食材箱、台面、炉灶上的锅、物品）；put 把手里的东西放到或装进目标；serve 上菜到出餐口；chop 切砧板上的东西直到切好；' +
+          'wash 洗水槽里的脏盘子（plates 只数，不写就洗完）；throw 把手里的食材扔向目标；go 走到目标旁或 x,z 格；' +
+          'wait 等 target 到 until（cooked 煮好、chopped 切好、item 上面有东西、empty 空出来、plates 有盘子），或者 until=seconds 等 seconds 秒；' +
+          'use 操作开关；extinguish 拿着灭火器灭目标的火。dash=true 路上冲刺。' +
+          'target 写场景描述里的标签，或者写 {find,near?,shared?} 让执行到这一步时再从我够得着的里面挑。' +
+          'queue：replace（不写就是它）撤掉还没开始的任务，正在做的做完；append 排到最后；now 叫停正在做的，先做这个。cancel 写任务号，顺带撤掉那几个。',
         tags: ['act'],
         parameters: {
           type: 'object',
           additionalProperties: false,
           properties: {
             steps: { type: 'array', minItems: 1, maxItems: 30, items: STEP_SCHEMA },
-            mode: { enum: ['append', 'replace'], default: 'append' },
+            queue: { enum: [...QUEUE_MODES], default: 'replace' },
+            cancel: { type: 'array', maxItems: 30, items: { type: 'integer', minimum: 1 } },
           },
           required: ['steps'],
         },
         handler: async args => this.doTool(args),
       },
       {
-        name: 'oc2_stop',
-        description: '取消正在做和排着的全部任务，厨师停下、松开所有按键。',
+        name: 'oc2_arm',
+        description:
+          '盯着一件事：条件成立的那一刻，自动把一串动作排进任务队列，不用等我再想一轮。条件先不成立、再成立才算一次；' +
+          'maxFirings 写最多排几次（不写是 1 次），expiresInSec 写盯多久（不写就盯到这一关结束）。' +
+          'queue 是排上时的排法，不写就是 now：叫停正在做的，先做这串。换关、离开厨房时自动撤掉。steps 的写法和 oc2_do 一样。',
         tags: ['act'],
-        parameters: { type: 'object', additionalProperties: false, properties: {} },
-        handler: async () => {
-          const n = await this.executor.cancel('我叫停了');
-          return `${n ? `取消了 ${n} 个任务` : '本来就没有任务'}。[队列] ${this.executor.describeQueue()}`;
+        parameters: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            when: CONDITION_SCHEMA,
+            steps: { type: 'array', minItems: 1, maxItems: 30, items: STEP_SCHEMA },
+            queue: { enum: [...QUEUE_MODES], default: 'now' },
+            maxFirings: { type: 'integer', minimum: 1, maximum: 16 },
+            expiresInSec: { type: 'integer', minimum: 1, maximum: 600 },
+          },
+          required: ['when', 'steps'],
         },
+        handler: async args => this.armTool(args),
+      },
+      {
+        name: 'oc2_stop',
+        description: '写 taskId 只撤掉那个任务（正在做的就叫停）；写 watchId 撤掉那件盯着的事；都不写就叫停全部任务、撤掉全部盯着的事，厨师停下、松开所有按键。',
+        tags: ['act'],
+        parameters: {
+          type: 'object',
+          additionalProperties: false,
+          properties: { taskId: { type: 'integer', minimum: 1 }, watchId: { type: 'integer', minimum: 1 } },
+        },
+        handler: async args => this.stopTool(args),
       },
       {
         name: 'oc2_look',
@@ -208,13 +252,127 @@ export class Overcooked2World implements World {
   private async doTool(args: Record<string, unknown>): Promise<ToolOutcome> {
     if (!this.bridge.connected) return { text: '游戏没连上。', failed: true };
     const { steps, problems } = parseSteps(args.steps, this.state, this.ctx());
-    if (problems.length) return { text: `没有排入：${problems.join('；')}`, failed: true };
-    const mode = args.mode === 'replace' ? 'replace' : 'append';
-    const id = await this.executor.submit(steps, mode);
+    const queue = parseQueue(args.queue, 'replace');
+    if (typeof queue !== 'string') problems.push(queue.problem);
+    const cancel = args.cancel ?? [];
+    if (!Array.isArray(cancel) || cancel.some(n => !Number.isInteger(n))) problems.push('cancel 要写任务号数组');
+    if (problems.length || typeof queue !== 'string') return { text: `没有排入：${problems.join('；')}`, failed: true };
+    const { id, notes } = await this.executor.submit(steps, queue, cancel as number[]);
     this.idleSince = 0;
     this.nudgedAt = 0;
-    const chain = steps.map(s => describe(s, this.state, this.ctx())).join(' → ');
-    return { text: `[执行器] 任务#${id} 收下了：${chain}。[队列] ${this.executor.describeQueue()}` };
+    const chain = steps.map(st => describe(st, this.state, this.ctx())).join(' → ');
+    return { text: `[执行器] 任务#${id} 收下了：${chain}。${notes.length ? `${notes.join('；')}。` : ''}\n${this.nowFacts(steps)}\n[队列] ${this.executor.describeQueue()}` };
+  }
+
+  private async armTool(args: Record<string, unknown>): Promise<ToolOutcome> {
+    if (!this.bridge.connected) return { text: '游戏没连上。', failed: true };
+    const s = this.state;
+    if (!s || s.phase === 'other') return { text: '不在厨房里，没有可盯的东西。', failed: true };
+    const ctx = this.ctx();
+    const problems: string[] = [];
+    const when = parseCondition(args.when, label => ctx.labels.resolve(label));
+    if (typeof when === 'string') problems.push(when);
+    const { steps, problems: stepProblems } = parseSteps(args.steps, s, ctx);
+    problems.push(...stepProblems);
+    const queue = parseQueue(args.queue, 'now');
+    if (typeof queue !== 'string') problems.push(queue.problem);
+    const max = args.maxFirings ?? 1;
+    if (!Number.isInteger(max) || (max as number) < 1 || (max as number) > 16) problems.push('maxFirings 要是 1 到 16 的整数');
+    const sec = args.expiresInSec;
+    if (sec !== undefined && (!Number.isInteger(sec) || (sec as number) < 1 || (sec as number) > 600)) problems.push('expiresInSec 要是 1 到 600 的整数');
+    if (problems.length || typeof when === 'string' || typeof queue !== 'string') return { text: `没有盯上：${problems.join('；')}`, failed: true };
+    const w = this.watches.arm(when, steps, queue, max as number, sec === undefined ? null : (sec as number) * 1000);
+    const until = sec === undefined ? '盯到这一关结束' : `盯 ${sec} 秒`;
+    const times = (max as number) > 1 ? `最多排 ${max} 次` : '排一次就撤';
+    const already = evaluate(when, s) ? '条件现在就成立，马上排上。' : '';
+    return { text: `盯着#${w.id} 盯上了：${this.watchText(w)}。${times}，${until}。${already}\n${this.watchesLine()}` };
+  }
+
+  private async stopTool(args: Record<string, unknown>): Promise<ToolOutcome> {
+    if (args.taskId !== undefined || args.watchId !== undefined) {
+      const out: string[] = [];
+      if (Number.isInteger(args.taskId)) out.push(await this.executor.cancelTask(args.taskId as number, '我叫停了'));
+      if (Number.isInteger(args.watchId)) out.push(this.watches.cancel(args.watchId as number, '我撤掉了') ? `撤掉了盯着#${args.watchId}` : `盯着#${args.watchId} 已经没了`);
+      return { text: `${out.join('；')}。[队列] ${this.executor.describeQueue()}` };
+    }
+    const n = await this.executor.cancel('我叫停了');
+    const w = this.watches.clear('我叫停了全部', 'cancelled');
+    return { text: `${n ? `取消了 ${n} 个任务` : '本来就没有任务'}${w ? `，撤掉了 ${w} 件盯着的事` : ''}。[队列] ${this.executor.describeQueue()}` };
+  }
+
+  /** 排上的那一刻：我手里有什么、这串动作碰到的每个对象现在是什么样、我够不够得着。 */
+  private nowFacts(steps: ParsedStep[]): string {
+    const s = this.state;
+    if (!s) return '[现在] 还没收到游戏状态';
+    const ctx = this.ctx();
+    const me = chefOf(s, 'bot');
+    const facts = [me?.held ? `我手里拿着${itemText(me.held, ctx)}` : '我手里空着'];
+    const seen = new Set<number>();
+    for (const step of steps) {
+      if (step.id === undefined || seen.has(step.id)) continue;
+      seen.add(step.id);
+      const fact = this.objectFact(step.id);
+      if (fact) facts.push(fact);
+    }
+    return `[现在] ${facts.join('；')}`;
+  }
+
+  /** 一个对象此刻在哪、是什么样，够不着时说哪一边够得着。食材箱、出餐口这类够得着时不写。 */
+  private objectFact(id: number): string | null {
+    const s = this.state;
+    if (!s) return null;
+    const ctx = this.ctx();
+    const { mine, theirs, split } = sides(s);
+    const reach = (cell: [number, number]) => {
+      if (cellReachable(s, cell, mine)) return '';
+      return split && cellReachable(s, cell, theirs) ? `，在我走不到的那一边，${ctx.partner}那边够得着` : '，我走不到';
+    };
+    const st = s.stations.find(x => x.id === id);
+    if (st) {
+      const far = reach(st.cell);
+      const plain = ['crate', 'pass', 'bin', 'fixture'].includes(st.kind);
+      return plain && !far ? null : `${stationText(st, s, ctx)}${far}`;
+    }
+    if (s.chefs.some(c => c.id === id)) return null;
+    const label = ctx.labels.of(id) ?? '';
+    const place = locate(s, id);
+    if (!place) return `${label} 已经不在场上了`;
+    if ('station' in place) return `${label} 在 ${stationName(place.station, ctx)} 上${reach(place.station.cell)}`;
+    if ('chef' in place) return `${label} 在${chefName(s.chefs.find(c => c.id === place.chef), ctx)}手里`;
+    return `${label} 在地上 (${place.cell[0]},${place.cell[1]})${reach(place.cell)}`;
+  }
+
+  private async fireWatch(w: Watch): Promise<string> {
+    const steps = w.steps.map(st => ({ ...st }));
+    const { id, notes } = await this.executor.submit(steps, w.queue);
+    this.idleSince = 0;
+    this.nudgedAt = 0;
+    const chain = steps.map(st => describe(st, this.state, this.ctx())).join(' → ');
+    return `排上了任务#${id}：${chain}。${notes.length ? `${notes.join('；')}。` : ''}`;
+  }
+
+  private onWatchReport(_w: Watch, end: WatchEnd, text: string): void {
+    void this.push('watch', `${text}\n[队列] ${this.executor.describeQueue()}`, end === 'fired' ? 'flush' : 'debounce');
+  }
+
+  private watchText(w: Watch): string {
+    const ctx = this.ctx();
+    return `${describeCondition(w.when, this.state, ctx)} → ${w.steps.map(st => describe(st, this.state, ctx)).join(' → ')}`;
+  }
+
+  /** 场景描述里的队列一句，有盯着的事时接在后面。 */
+  private queueText(): string {
+    const all = this.watches.all;
+    const queue = this.executor.describeQueue();
+    if (!all.length) return queue;
+    return `${queue}；盯着 ${all.map(w => `#${w.id} ${describeCondition(w.when, this.state, this.ctx())}`).join('、')}`;
+  }
+
+  /** 还在盯着的事，一行。 */
+  private watchesLine(): string {
+    const all = this.watches.all;
+    if (!all.length) return '[盯着] 没有';
+    return `[盯着] ${all.map(w => `#${w.id} ${describeCondition(w.when, this.state, this.ctx())}（还能排 ${w.left} 次）`).join('；')}`;
   }
 
   private async lookTool(): Promise<ToolOutcome> {
@@ -235,8 +393,14 @@ export class Overcooked2World implements World {
     return { text, blobs };
   }
 
-  private async runStep(step: ParsedStep, signal: AbortSignal): Promise<{ ok: boolean; detail: string }> {
+  private async runStep(queued: ParsedStep, signal: AbortSignal): Promise<{ ok: boolean; detail: string }> {
     if (signal.aborted) return { ok: false, detail: '已取消' };
+    let step = queued;
+    if (queued.find) {
+      const picked = resolveFind(queued.find, this.state, this.ctx());
+      if ('why' in picked) return { ok: false, detail: picked.why };
+      step = { ...queued, id: picked.id, target: this.ctx().labels.of(picked.id) };
+    }
     let reply: Reply;
     try {
       reply = await this.bridge.request({ op: 'act', step: pluginStep(step) }, STEP_TIMEOUT_MS);
@@ -245,7 +409,12 @@ export class Overcooked2World implements World {
       await this.bridge.request({ op: 'halt' }, REQUEST_TIMEOUT_MS).catch(() => undefined);
       throw err;
     }
-    return stepResult(step, reply, this.state, this.ctx());
+    const result = stepResult(step, reply, this.state, this.ctx());
+    if (!result.ok && reply.why !== '已取消' && step.id !== undefined) {
+      const fact = this.objectFact(step.id);
+      if (fact) result.detail += `。现在 ${fact}`;
+    }
+    return result;
   }
 
   private onTaskReport(r: TaskReport): void {
@@ -261,17 +430,35 @@ export class Overcooked2World implements World {
     const prev = this.state;
     this.state = s;
     this.labels.update(s);
-    const layoutKey = s.layout ? s.layout.rows.join('|') : '';
-    if (layoutKey && layoutKey !== this.layoutKey) {
-      // 地形会变的关卡里地图可能一直在变，带地图的完整版至多每 LAYOUT_ANCHOR_MS 一次。
-      if (this.layoutKey && Date.now() - this.lastAnchorAt > LAYOUT_ANCHOR_MS) this.anchorPending = true;
-      this.layoutKey = layoutKey;
+    const kitchen = s.phase === 'other' ? '' : `${s.scene}|${s.level ?? ''}`;
+    if (kitchen !== this.kitchenKey) {
+      // 标签换关重编，盯着的事里的标签跟着失效。
+      if (this.kitchenKey) this.watches.clear(kitchen ? '换关了' : '离开厨房了');
+      this.kitchenKey = kitchen;
     }
+    this.checkLayout(s);
     if (s.phase === 'other' && prev?.phase !== 'other') this.baseline.clear();
     this.autoJoin(s);
     this.checkOrders(s);
     this.checkIdle(s);
+    if (s.phase === 'round') void this.watches.tick(s);
     this.arm();
+  }
+
+  /**
+   * 地图真变了（新的样子保持了 LAYOUT_STABLE_MS）且和上一条完整现状里画的不同，才补一条带地图的
+   * 完整现状，至多每 LAYOUT_ANCHOR_MS 一次。来回闪的格子不触发。
+   */
+  private checkLayout(s: GameState): void {
+    const key = s.layout ? [...s.layout.rows, ...(s.layout.regions ?? [])].join('|') : '';
+    const now = Date.now();
+    if (key !== this.layoutKey) {
+      this.layoutKey = key;
+      this.layoutSince = now;
+    }
+    if (key && this.anchoredLayout && key !== this.anchoredLayout && now - this.layoutSince >= LAYOUT_STABLE_MS && now - this.lastAnchorAt > LAYOUT_ANCHOR_MS) {
+      this.anchorPending = true;
+    }
   }
 
   private autoJoin(s: GameState): void {
@@ -389,7 +576,7 @@ export class Overcooked2World implements World {
 
   /** 比基线变了的段；没有变化（或只有队列一句）时返回 null。 */
   private renderChanges(s: GameState): string | null {
-    const segs = segments(s, this.ctx(), { trail: this.trail, queue: this.executor.describeQueue() });
+    const segs = segments(s, this.ctx(), { trail: this.trail, queue: this.queueText() });
     const lines: string[] = [];
     const seen = new Set<string>();
     for (const g of segs) {
@@ -412,8 +599,9 @@ export class Overcooked2World implements World {
   private renderFull(s: GameState): string {
     this.anchorPending = false;
     this.lastAnchorAt = Date.now();
+    this.anchoredLayout = this.layoutKey;
     const ctx = this.ctx();
-    const segs = segments(s, ctx, { trail: this.trail, queue: this.executor.describeQueue() });
+    const segs = segments(s, ctx, { trail: this.trail, queue: this.queueText() });
     this.baseline.clear();
     for (const g of segs) this.baseline.set(g.key, g.cmp);
     this.trail = [];
@@ -422,6 +610,23 @@ export class Overcooked2World implements World {
     const stations = s.stations.filter(st => !(st.kind === 'counter' && !st.item && !st.onFire)).map(st => stationText(st, s, ctx));
     const map = mapText(s, ctx);
     const legend = `地图（x 向右，z 向上；「我」是我，「${ctx.partner.slice(0, 1)}」是${ctx.partner}；. 地面，< > ^ v 传送带（站上去会被往箭头方向带），# 墙或障碍，其余是站点标签；没列出的 C、Z 台面是空的）：`;
-    return `${TAG} 完整现状\n${head.join('\n')}\n站点：\n${stations.join('\n')}${map ? `\n${legend}\n${map}` : ''}`;
+    const split = this.splitText(s);
+    return `${TAG} 完整现状\n${head.join('\n')}\n站点：\n${stations.join('\n')}${map ? `\n${legend}\n${map}` : ''}${split ? `\n${split}` : ''}`;
   }
+
+  /** 厨房被台面隔成两边、我和队友各在一边时：我够不着哪些站点，哪些台面两边都够得着。 */
+  private splitText(s: GameState): string {
+    const { mine, theirs, split } = sides(s);
+    if (!split) return '';
+    const ctx = this.ctx();
+    const label = (id: number) => ctx.labels.of(id) ?? '?';
+    const far = s.stations.filter(st => st.kind !== 'counter' && st.kind !== 'fixture' && !cellReachable(s, st.cell, mine)).map(st => label(st.id));
+    const shared = s.stations.filter(st => st.kind === 'counter' && cellReachable(s, st.cell, mine) && cellReachable(s, st.cell, theirs)).map(st => label(st.id));
+    return `厨房被台面隔成两边，我和${ctx.partner}各在一边。我够不着的站点：${far.join('、') || '没有'}。两边都够得着、能用来交接的台面：${shared.join('、') || '没有，只能扔过去'}。`;
+  }
+}
+
+function parseQueue(raw: unknown, fallback: QueueMode): QueueMode | { problem: string } {
+  if (raw === undefined) return fallback;
+  return QUEUE_MODES.includes(raw as QueueMode) ? (raw as QueueMode) : { problem: `queue 只能是 ${QUEUE_MODES.join('/')}` };
 }

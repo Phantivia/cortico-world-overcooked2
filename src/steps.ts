@@ -1,21 +1,57 @@
 /**
  * oc2_do 的步骤：参数校验、标签解析成对象 id、一步的称呼和完成时的说法。标签在排入时解析，之后
- * 指向同一个对象；对象被用掉或拿走时由插件在执行那一步时报原因。
+ * 指向同一个对象；对象被用掉或拿走时由插件在执行那一步时报原因。target 也可以写 find，执行到
+ * 这一步时才按当时的厨房挑对象（resolveFind）。
  */
 import type { Step, StepResult } from './executor.ts';
-import type { GameState, Item } from './state.ts';
+import type { GameState, Item, Station } from './state.ts';
 import { itemText, nameOf, type RenderCtx } from './render.ts';
 import type { Reply } from './bridge.ts';
+import { cellReachable, chefOf, sideOf } from './sides.ts';
 
 export const STEP_KINDS = ['take', 'put', 'serve', 'chop', 'wash', 'throw', 'go', 'wait', 'use', 'extinguish'] as const;
 export const WAIT_UNTIL = ['cooked', 'chopped', 'item', 'empty', 'plates', 'seconds'] as const;
+export const FIND_KINDS = ['empty_counter', 'empty_board', 'clean_plate', 'cooked'] as const;
+export type FindKind = (typeof FIND_KINDS)[number];
+
+/** 执行时才挑的目标。near 是标签或 partner；shared 只挑两边都够得着的。 */
+export interface Find {
+  find: FindKind;
+  near?: string;
+  /** near 解析成的对象 id；near 是 partner 时不填，执行时取队友当时的位置。 */
+  nearId?: number;
+  shared?: boolean;
+}
+
+const FIND_TEXT: Record<FindKind, string> = {
+  empty_counter: '空台面',
+  empty_board: '空砧板',
+  clean_plate: '干净的空盘子',
+  cooked: '煮好的锅所在的站点',
+};
+
+export const FIND_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    find: { enum: [...FIND_KINDS], description: 'empty_counter 空台面，empty_board 空砧板，clean_plate 干净的空盘子，cooked 锅里东西煮好了的站点' },
+    near: { type: 'string', description: '挑离这个标签（或 partner）最近的；不写就挑离我最近的' },
+    shared: { type: 'boolean', description: '只挑我和队友两边都够得着的，交接用' },
+  },
+  required: ['find'],
+};
 
 export const STEP_SCHEMA = {
   type: 'object',
   additionalProperties: false,
   properties: {
     do: { enum: [...STEP_KINDS] },
-    target: { type: 'string', description: '对象标签（如 B1、K2、P3），throw 也可写 partner' },
+    target: {
+      oneOf: [
+        { type: 'string', description: '对象标签（如 B1、K2、P3），throw 也可写 partner' },
+        { ...FIND_SCHEMA, description: '执行到这一步时再挑：从我够得着的里面选' },
+      ],
+    },
     x: { type: 'integer' },
     z: { type: 'integer' },
     until: { enum: [...WAIT_UNTIL] },
@@ -31,6 +67,8 @@ export interface ParsedStep extends Step {
   target?: string;
   /** 解析后的对象 id，发给插件。 */
   id?: number;
+  /** 执行时再挑的目标；挑出来之前没有 id。 */
+  find?: Find;
   x?: number;
   z?: number;
   until?: (typeof WAIT_UNTIL)[number];
@@ -55,8 +93,12 @@ export function parseSteps(raw: unknown, state: GameState | null, ctx: RenderCtx
     const step: ParsedStep = { do: kind };
     for (const key of Object.keys(s)) if (!(key in STEP_SCHEMA.properties)) problems.push(`${n}：没有 ${key} 这个字段`);
     if (typeof s.dash === 'boolean') step.dash = s.dash;
-    if (s.target !== undefined) {
-      if (typeof s.target !== 'string') problems.push(`${n}：target 要是标签字符串`);
+    if (s.target !== undefined && typeof s.target === 'object' && s.target !== null) {
+      const f = parseFind(s.target as Record<string, unknown>, state, ctx);
+      if (typeof f === 'string') problems.push(`${n}：${f}`);
+      else step.find = f;
+    } else if (s.target !== undefined) {
+      if (typeof s.target !== 'string') problems.push(`${n}：target 要是标签字符串，或者 {find:…}`);
       else {
         const label = s.target.trim();
         step.target = label.toUpperCase();
@@ -90,6 +132,74 @@ export function parseSteps(raw: unknown, state: GameState | null, ctx: RenderCtx
   return { steps, problems };
 }
 
+function parseFind(raw: Record<string, unknown>, state: GameState | null, ctx: RenderCtx): Find | string {
+  for (const key of Object.keys(raw)) if (!(key in FIND_SCHEMA.properties)) return `target 里没有 ${key} 这个字段`;
+  if (!FIND_KINDS.includes(raw.find as FindKind)) return `find 只能是 ${FIND_KINDS.join('/')}`;
+  const out: Find = { find: raw.find as FindKind };
+  if (raw.shared !== undefined) {
+    if (typeof raw.shared !== 'boolean') return 'shared 要是 true 或 false';
+    out.shared = raw.shared;
+  }
+  if (raw.near !== undefined) {
+    if (typeof raw.near !== 'string') return 'near 要是标签或 partner';
+    const label = raw.near.trim();
+    if (/^partner$|^队友$/i.test(label) || label === ctx.partner) out.near = 'partner';
+    else {
+      const id = ctx.labels.resolve(label);
+      if (id === undefined || !state) return `现在没有标签 ${label}`;
+      out.near = label.toUpperCase();
+      out.nearId = id;
+    }
+  }
+  return out;
+}
+
+/** 「离 Phant 最近的空台面（两边都够得着）」这样的称呼。 */
+export function findText(f: Find, ctx: RenderCtx): string {
+  const near = f.near === 'partner' ? `离${ctx.partner}最近的` : f.near ? `离 ${f.near} 最近的` : '最近的';
+  return `${near}${FIND_TEXT[f.find]}${f.shared ? '（两边都够得着）' : ''}`;
+}
+
+function cellOf(id: number, state: GameState): [number, number] | undefined {
+  const st = state.stations.find(s => s.id === id);
+  if (st) return st.cell;
+  for (const s of state.stations) if (s.item?.id === id) return s.cell;
+  for (const c of state.chefs) if (c.id === id || c.held?.id === id) return c.cell;
+  return state.loose.find(i => i.id === id)?.cell;
+}
+
+function matches(f: FindKind, st: Station): boolean {
+  const item = st.item;
+  switch (f) {
+    case 'empty_counter':
+      return st.kind === 'counter' && !item && !st.onFire;
+    case 'empty_board':
+      return st.kind === 'board' && !item && !st.onFire;
+    case 'clean_plate':
+      return item?.kind === 'plate' && !item.dirty && (item.stack !== undefined ? item.stack > 0 : !item.contents?.length);
+    case 'cooked':
+      return !!item && (item.cook === 'done' || item.cook === 'overdone') && !!item.contents?.length;
+  }
+}
+
+/** 按此刻的厨房给 find 挑一个站点：只挑我够得着的（shared 时两边都要够得着），取离起点最近的。 */
+export function resolveFind(f: Find, state: GameState | null, ctx: RenderCtx): { id: number } | { why: string } {
+  const what = findText(f, ctx);
+  if (!state) return { why: `没有游戏状态，挑不了${what}` };
+  const me = chefOf(state, 'bot');
+  const partner = chefOf(state, 'partner');
+  const mine = sideOf(state, me);
+  const theirs = sideOf(state, partner);
+  const origin = f.near === 'partner' ? partner?.cell : f.nearId !== undefined ? cellOf(f.nearId, state) : me?.cell;
+  if (!origin) return { why: f.near ? `${f.near === 'partner' ? ctx.partner : f.near} 现在不在场上，挑不了${what}` : `我现在没有厨师，挑不了${what}` };
+  const candidates = state.stations
+    .filter(st => matches(f.find, st) && cellReachable(state, st.cell, mine) && (!f.shared || cellReachable(state, st.cell, theirs)))
+    .map(st => ({ st, d: Math.abs(st.cell[0] - origin[0]) + Math.abs(st.cell[1] - origin[1]) }))
+    .sort((a, b) => a.d - b.d || a.st.id - b.st.id);
+  if (!candidates.length) return { why: `现在没有我够得着的${FIND_TEXT[f.find]}${f.shared ? '（两边都够得着的）' : ''}` };
+  return { id: candidates[0].st.id };
+}
+
 /** 发给插件的形状。 */
 export function pluginStep(step: ParsedStep): Record<string, unknown> {
   const out: Record<string, unknown> = { do: step.do };
@@ -101,7 +211,7 @@ export function pluginStep(step: ParsedStep): Record<string, unknown> {
 const UNTIL_TEXT: Record<string, string> = { cooked: '加热好', chopped: '切好', item: '上面有东西', empty: '空出来', plates: '有盘子' };
 
 export function describe(step: ParsedStep, state: GameState | null, ctx: RenderCtx): string {
-  const t = step.id !== undefined ? nameOf(step.id, state, ctx) : step.target ?? '';
+  const t = step.id !== undefined ? nameOf(step.id, state, ctx) : step.find ? findText(step.find, ctx) : step.target ?? '';
   switch (step.do) {
     case 'take': {
       const on = state?.stations.find(st => st.id === step.id)?.item;

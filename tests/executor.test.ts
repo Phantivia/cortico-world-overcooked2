@@ -64,16 +64,47 @@ describe('Executor', () => {
     expect(p.calls).not.toContain('run chop');
   });
 
-  it('replace cancels queued work before the new task runs', async () => {
+  it('replace drops queued work and lets the running task finish first', async () => {
     const p = plugin();
     const reports: TaskReport[] = [];
     const ex = new Executor({ run: p.run, halt: p.halt, describe: s => s.do, report: r => reports.push(r) });
     await ex.submit([{ do: 'go' }], 'append');
     await ex.submit([{ do: 'chop' }], 'append');
     await tick();
-    await ex.submit([{ do: 'wash' }], 'replace');
+    const { notes } = await ex.submit([{ do: 'wash' }], 'replace');
+    expect(reports.map(r => [r.id, r.kind])).toEqual([[2, 'cancelled']]);
+    expect(notes.join('；')).toContain('正在做的任务#1会做完');
+    p.finish({ ok: true, detail: '到了' });
+    for (let i = 0; i < 5; i++) await tick();
+    expect(p.calls).toEqual(['run go', 'run wash']);
+  });
+
+  it('now halts the running task and runs the new one before what was queued', async () => {
+    const p = plugin();
+    const reports: TaskReport[] = [];
+    const ex = new Executor({ run: p.run, halt: p.halt, describe: s => s.do, report: r => reports.push(r) });
+    await ex.submit([{ do: 'go' }], 'append');
+    await ex.submit([{ do: 'chop' }], 'append');
     await tick();
-    expect(reports.map(r => r.kind)).toEqual(['cancelled', 'cancelled']);
-    expect(p.calls).toEqual(['run go', 'halt', 'run wash']);
+    await ex.submit([{ do: 'extinguish' }], 'now');
+    for (let i = 0; i < 5; i++) await tick();
+    expect(reports.map(r => [r.id, r.kind])).toEqual([[1, 'cancelled']]);
+    expect(p.calls).toEqual(['run go', 'halt', 'run extinguish']);
+    p.finish({ ok: true, detail: '火灭了' });
+    for (let i = 0; i < 5; i++) await tick();
+    expect(p.calls.at(-1)).toBe('run chop');
+  });
+
+  it('cancels only the tasks named by number', async () => {
+    const p = plugin();
+    const reports: TaskReport[] = [];
+    const ex = new Executor({ run: p.run, halt: p.halt, describe: s => s.do, report: r => reports.push(r) });
+    await ex.submit([{ do: 'go' }], 'append');
+    await ex.submit([{ do: 'chop' }], 'append');
+    await ex.submit([{ do: 'wash' }], 'append');
+    await tick();
+    await ex.submit([{ do: 'take' }], 'append', [2]);
+    expect(reports.map(r => [r.id, r.kind])).toEqual([[2, 'cancelled']]);
+    expect(ex.describeQueue()).toBe('正在做任务#1（第 1/1 步：go）；后面排着 任务#3（1 步）、任务#4（1 步）');
   });
 });
