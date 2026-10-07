@@ -95,6 +95,8 @@ export interface Layout {
   maxZ: number;
   /** 行优先、z 从大到小（画面上方在前）；`.` 厨师走得到的地面，`< > ^ v` 传送带（带人走的方向），`#` 站点或障碍，空格其他。 */
   rows: string[];
+  /** 与 rows 同形状：同一个厨师走得到的地面格同一个字母（a、b…），其他格是空格。 */
+  regions?: string[];
 }
 
 export interface GameState {

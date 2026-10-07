@@ -6,11 +6,18 @@ namespace CorticoOvercooked2
     /// <summary>
     /// Four-neighbour routes on the kitchen grid. A cell is walkable when the grid has no occupant
     /// there, floor lies under its centre and the chef's capsule fits without touching level
-    /// geometry. Chefs and loose items do not count as geometry; the other chefs' cells are passed
-    /// in as blocked.
+    /// geometry. Chefs and items do not count as geometry; the other chefs' cells are passed in as
+    /// blocked.
     /// </summary>
     internal static class Nav
     {
+        /// <summary>
+        /// How much a route trusts physics. Strict: the body fits each cell and passes each edge.
+        /// Edges: standable cells joined by clear edges, the rule the layout map is drawn with.
+        /// Loose: standable cells only, for props the chef walks over that both checks reject.
+        /// </summary>
+        public enum Mode { Strict, Edges, Loose }
+
         private static readonly Collider[] Overlaps = new Collider[32];
         /// <summary>Capsules are lifted this far so floor and travelator tops under the feet do not count.</summary>
         private const float Lift = 0.1f;
@@ -56,12 +63,22 @@ namespace CorticoOvercooked2
                 var other = Overlaps[i];
                 Overlaps[i] = null;
                 if (blocker != null || other == null || other.transform.IsChildOf(chef.transform)) continue;
-                if (other.GetComponentInParent<PlayerControls>() != null || other.GetComponentInParent<Travelator>() != null) continue;
-                if (other.attachedRigidbody != null && !other.attachedRigidbody.isKinematic) continue;
+                if (Passable(other)) continue;
                 if (Physics.GetIgnoreLayerCollision(body.gameObject.layer, other.gameObject.layer)) continue;
                 blocker = other;
             }
             return blocker;
+        }
+
+        /// <summary>
+        /// Chefs, travelators, items (held, on counters or on the floor, which chefs push aside) and
+        /// anything physics moves never block a route.
+        /// </summary>
+        private static bool Passable(Collider other)
+        {
+            if (other.GetComponentInParent<PlayerControls>() != null || other.GetComponentInParent<Travelator>() != null) return true;
+            if (other.GetComponentInParent<ServerPhysicalAttachment>() != null) return true;
+            return other.attachedRigidbody != null && !other.attachedRigidbody.isKinematic;
         }
 
         private static readonly RaycastHit[] Hits = new RaycastHit[32];
@@ -90,8 +107,7 @@ namespace CorticoOvercooked2
                 // Colliders the capsule already overlaps at the start (the floor or travelator it stands on).
                 if (distance <= 0f) continue;
                 if (!clear || other == null || other.transform.IsChildOf(chef.transform)) continue;
-                if (other.GetComponentInParent<PlayerControls>() != null || other.GetComponentInParent<Travelator>() != null) continue;
-                if (other.attachedRigidbody != null && !other.attachedRigidbody.isKinematic) continue;
+                if (Passable(other)) continue;
                 if (Physics.GetIgnoreLayerCollision(body.gameObject.layer, other.gameObject.layer)) continue;
                 // Floor under the path: hits that start at the path's own height are ground contacts.
                 if (normalY > 0.7f) continue;
@@ -111,13 +127,8 @@ namespace CorticoOvercooked2
             return Kitchen.IsFloor(g.GetPosFromGridLocation(new GridIndex(x, 0, z)));
         }
 
-        /// <summary>
-        /// Shortest route from start to any goal cell, excluding start; null if none. Strict routes
-        /// also require the chef's body to fit each cell and pass each edge; callers fall back to a
-        /// non-strict route when the physics checks reject every way (small steps and props that the
-        /// chef walks over), and the walk replans when it gets stuck.
-        /// </summary>
-        public static List<Cell> Route(Kitchen k, PlayerControls chef, Cell start, HashSet<long> goals, HashSet<long> blocked, bool strict = true)
+        /// <summary>Shortest route from start to any goal cell, excluding start; null if none.</summary>
+        public static List<Cell> Route(Kitchen k, PlayerControls chef, Cell start, HashSet<long> goals, HashSet<long> blocked, Mode mode = Mode.Strict)
         {
             var previous = new Dictionary<long, long>();
             var queue = new Queue<Cell>();
@@ -139,8 +150,8 @@ namespace CorticoOvercooked2
                     var next = new Cell(at.X + Dx[i], at.Z + Dz[i]);
                     long key = Key(next);
                     if (previous.ContainsKey(key) || blocked.Contains(key)) continue;
-                    if (!walkable.TryGetValue(key, out var ok)) walkable[key] = ok = strict ? Walkable(k, chef, next.X, next.Z) : Standable(k, next.X, next.Z);
-                    if (!ok || (strict && !EdgeClear(k, chef, at, next))) continue;
+                    if (!walkable.TryGetValue(key, out var ok)) walkable[key] = ok = mode == Mode.Strict ? Walkable(k, chef, next.X, next.Z) : Standable(k, next.X, next.Z);
+                    if (!ok || (mode != Mode.Loose && !EdgeClear(k, chef, at, next))) continue;
                     previous[key] = Key(at);
                     queue.Enqueue(next);
                 }

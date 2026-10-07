@@ -267,13 +267,19 @@ namespace CorticoOvercooked2
 
         private float CellSize => _k.Grid != null ? Vector3.Distance(_k.CellCenter(0, 0), _k.CellCenter(1, 0)) : 1.2f;
 
-        /// <summary>Walks to one of the goal cells. `label` names the destination in failure text.</summary>
+        /// <summary>
+        /// Walks to one of the goal cells. Routes are tried strict, then by the rule the layout map
+        /// is drawn with. When the map has no way even with the other chef ignored, the goal is on
+        /// another side: one loose route is tried for props both physics checks reject and given up
+        /// at its first stall, so a split kitchen costs no long walk into the counters.
+        /// </summary>
         private IEnumerator Walk(Outcome o, HashSet<long> goals, bool dash, float timeoutSec)
         {
             float deadline = Time.realtimeSinceStartup + timeoutSec;
             int replans = 0;
             float nextDash = 0f;
             float waitingForChefSince = -1f;
+            bool loose = false;
             while (true)
             {
                 yield return Ready(o);
@@ -285,32 +291,40 @@ namespace CorticoOvercooked2
                     Pad.Stop();
                     yield break;
                 }
-                var route = Nav.Route(_k, chef, start, goals, OtherChefCells(chef)) ?? Nav.Route(_k, chef, start, goals, OtherChefCells(chef), strict: false);
-                if (route == null)
+                var others = OtherChefCells(chef);
+                var route = Nav.Route(_k, chef, start, goals, others) ?? Nav.Route(_k, chef, start, goals, others, Nav.Mode.Edges);
+                loose = false;
+                if (route == null && Nav.Route(_k, chef, start, goals, new HashSet<long>(), Nav.Mode.Edges) != null)
                 {
                     // Only the other chef in the way (standing on the one free cell next to a crate,
                     // or in a one-cell gap): wait for them to step away, up to ChefWaitSec.
-                    bool chefInWay = Nav.Route(_k, chef, start, goals, new HashSet<long>(), strict: false) != null;
-                    if (chefInWay)
+                    if (waitingForChefSince < 0) waitingForChefSince = Time.realtimeSinceStartup;
+                    if (Time.realtimeSinceStartup - waitingForChefSince < ChefWaitSec && Time.realtimeSinceStartup < deadline)
                     {
-                        if (waitingForChefSince < 0) waitingForChefSince = Time.realtimeSinceStartup;
-                        if (Time.realtimeSinceStartup - waitingForChefSince < ChefWaitSec && Time.realtimeSinceStartup < deadline)
-                        {
-                            Pad.Stop();
-                            for (float until = Time.realtimeSinceStartup + 0.3f; Time.realtimeSinceStartup < until;) yield return null;
-                            continue;
-                        }
-                        Fail(o, $"要站的位置被{{by}}占着，等了 {ChefWaitSec:0} 秒还没让开", null, "partner");
-                        yield break;
+                        Pad.Stop();
+                        for (float until = Time.realtimeSinceStartup + 0.3f; Time.realtimeSinceStartup < until;) yield return null;
+                        continue;
                     }
-                    if (replans++ < 6 && Time.realtimeSinceStartup < deadline)
+                    Fail(o, $"要站的位置或必经的路被{{by}}占着，等了 {ChefWaitSec:0} 秒还没让开", null, "partner");
+                    yield break;
+                }
+                if (route == null)
+                {
+                    // Not on the map from here. Physics readings can drop a cell for a moment, so look
+                    // again shortly before deciding.
+                    if (replans++ < 3 && Time.realtimeSinceStartup < deadline)
                     {
                         Pad.Stop();
                         for (float until = Time.realtimeSinceStartup + 0.4f; Time.realtimeSinceStartup < until;) yield return null;
                         continue;
                     }
-                    Fail(o, "走不过去：目标旁边没有能站的空位，或者路被挡住了");
-                    yield break;
+                    route = Nav.Route(_k, chef, start, goals, others, Nav.Mode.Loose);
+                    if (route == null)
+                    {
+                        Fail(o, "走不到：按地图从我站的地方没有路通到那里（中间隔着台面或墙）");
+                        yield break;
+                    }
+                    loose = true;
                 }
                 waitingForChefSince = -1f;
                 if (route.Count == 0) route.Add(start);
@@ -346,7 +360,8 @@ namespace CorticoOvercooked2
                 }
                 Pad.Stop();
                 if (!replan) yield break;
-                if (replans > 8) { Fail(o, "路上一直被挡住"); yield break; }
+                if (loose) { Fail(o, "走不到：按地图从我站的地方没有路通到那里，硬走也被挡住了"); yield break; }
+                if (replans > 8) { Fail(o, "路上一直被挡住，换了几次路线都走不动"); yield break; }
             }
         }
 
@@ -391,7 +406,7 @@ namespace CorticoOvercooked2
                 Pad.Stop();
                 goals.Remove(Nav.Key(ChefCell(ChefNow())));
                 // Another side only helps when one is reachable; otherwise report what the game selects.
-                if (goals.Count == 0 || Nav.Route(_k, ChefNow(), ChefCell(ChefNow()), goals, OtherChefCells(ChefNow()), strict: false) == null) break;
+                if (goals.Count == 0 || Nav.Route(_k, ChefNow(), ChefCell(ChefNow()), goals, new HashSet<long>(), Nav.Mode.Edges) == null) break;
             }
             Fail(o, wrong != null ? "站到旁边了，但游戏选中的是旁边别的东西" : "站到旁边了，但游戏没有选中它");
             var st = wrong != null ? (_k.StationOf(wrong) ?? _k.StationHolding(wrong)) : null;

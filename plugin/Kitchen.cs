@@ -463,37 +463,50 @@ namespace CorticoOvercooked2
         /// <summary>
         /// Rows from top (max z) to bottom: `.` floor a chef can walk to, `#` an occupant next to such
         /// floor (station, wall piece), space for anything else. Bounds cover only those cells.
+        /// `regions` has the same shape: floor cells that one chef can walk between share a letter
+        /// (`a`, `b`…), so a kitchen split by counters shows which side each cell is on.
         /// </summary>
         private string Layout()
         {
             var half = Grid.GetGridHalfSize();
             var cells = new Dictionary<long, char>();
-            var queue = new Queue<int[]>();
+            var region = new Dictionary<long, char>();
             PlayerControls reference = null;
+            foreach (var c in Chefs()) { reference = c; break; }
+            int[] dx = { 1, -1, 0, 0 }, dz = { 0, 0, 1, -1 };
+            char next = 'a';
             foreach (var c in Chefs())
             {
-                var at = Cell(c.transform.position);
-                if (cells.ContainsKey(Key(at[0], at[1]))) continue;
-                cells[Key(at[0], at[1])] = '.';
-                queue.Enqueue(at);
-                if (reference == null) reference = c;
-            }
-            int[] dx = { 1, -1, 0, 0 }, dz = { 0, 0, 1, -1 };
-            while (queue.Count > 0)
-            {
-                var at = queue.Dequeue();
-                for (int i = 0; i < 4; i++)
+                var start = Cell(c.transform.position);
+                if (region.ContainsKey(Key(start[0], start[1]))) continue;
+                char letter = next++;
+                // The chef stands here, so it is floor even when the cell centre is not.
+                char own = CellChar(start[0], start[1]);
+                cells[Key(start[0], start[1])] = own == ' ' || own == '#' ? '.' : own;
+                region[Key(start[0], start[1])] = letter;
+                var queue = new Queue<int[]>();
+                queue.Enqueue(start);
+                while (queue.Count > 0)
                 {
-                    int x = at[0] + dx[i], z = at[1] + dz[i];
-                    if (x < -half.X || x > half.X || z < -half.Z || z > half.Z || cells.ContainsKey(Key(x, z))) continue;
-                    char ch = CellChar(x, z);
-                    if (ch == ' ') continue;
-                    bool floor = ch != '#';
-                    if (floor && reference != null && !Nav.EdgeClear(this, reference, new Nav.Cell(at[0], at[1]), new Nav.Cell(x, z))) continue;
-                    cells[Key(x, z)] = ch;
-                    if (floor) queue.Enqueue(new[] { x, z });
+                    var at = queue.Dequeue();
+                    for (int i = 0; i < 4; i++)
+                    {
+                        int x = at[0] + dx[i], z = at[1] + dz[i];
+                        long key = Key(x, z);
+                        if (x < -half.X || x > half.X || z < -half.Z || z > half.Z || region.ContainsKey(key)) continue;
+                        char ch = cells.TryGetValue(key, out var known) ? known : CellChar(x, z);
+                        if (ch == ' ') continue;
+                        cells[key] = ch;
+                        if (ch == '#') continue;
+                        if (!Nav.EdgeClear(this, reference, new Nav.Cell(at[0], at[1]), new Nav.Cell(x, z))) continue;
+                        region[key] = letter;
+                        queue.Enqueue(new[] { x, z });
+                    }
                 }
             }
+            // Floor met only across a blocked edge belongs to no chef's side and is not drawn.
+            foreach (var key in new List<long>(cells.Keys))
+                if (cells[key] != '#' && !region.ContainsKey(key)) cells.Remove(key);
             if (cells.Count == 0) return null;
             int minX = int.MaxValue, maxX = int.MinValue, minZ = int.MaxValue, maxZ = int.MinValue;
             foreach (var key in cells.Keys)
@@ -502,13 +515,21 @@ namespace CorticoOvercooked2
                 minX = Math.Min(minX, x); maxX = Math.Max(maxX, x); minZ = Math.Min(minZ, z); maxZ = Math.Max(maxZ, z);
             }
             var rows = new List<string>();
+            var sides = new List<string>();
             for (int z = maxZ; z >= minZ; z--)
             {
                 var row = new char[maxX - minX + 1];
-                for (int x = minX; x <= maxX; x++) row[x - minX] = cells.TryGetValue(Key(x, z), out var c) ? c : ' ';
+                var side = new char[maxX - minX + 1];
+                for (int x = minX; x <= maxX; x++)
+                {
+                    row[x - minX] = cells.TryGetValue(Key(x, z), out var c) ? c : ' ';
+                    side[x - minX] = region.TryGetValue(Key(x, z), out var r) ? r : ' ';
+                }
                 rows.Add(new string(row));
+                sides.Add(new string(side));
             }
-            return new JObj().Int("minX", minX).Int("maxX", maxX).Int("minZ", minZ).Int("maxZ", maxZ).Raw("rows", JObj.Strings(rows)).ToString();
+            return new JObj().Int("minX", minX).Int("maxX", maxX).Int("minZ", minZ).Int("maxZ", maxZ)
+                .Raw("rows", JObj.Strings(rows)).Raw("regions", JObj.Strings(sides)).ToString();
         }
 
         private static long Key(int x, int z) => ((long)x << 32) ^ (uint)z;
@@ -546,9 +567,10 @@ namespace CorticoOvercooked2
         private static readonly int PlayersLayer = LayerMask.NameToLayer("Players");
 
         /// <summary>
-        /// Floor under a cell centre: the first solid surface below that faces up and that a chef
-        /// collides with. Chefs and items are looked through; kill planes and water are triggers and
-        /// so are never floor. Levels use their own layers for floors, so no layer is assumed.
+        /// Floor under a cell centre: the first surface below that faces up, among those a chef
+        /// collides with. Chefs, items and colliders chefs pass through are looked through; kill
+        /// planes and water are triggers and so are never floor. Levels use their own layers for
+        /// floors, so no layer is assumed.
         /// </summary>
         public static bool IsFloor(Vector3 center)
         {
@@ -559,7 +581,8 @@ namespace CorticoOvercooked2
                 var go = h.collider.gameObject;
                 if (go.GetComponentInParent<PlayerControls>() != null || go.GetComponentInParent<ServerPhysicalAttachment>() != null) continue;
                 if (h.collider.attachedRigidbody != null && !h.collider.attachedRigidbody.isKinematic) continue;
-                return h.normal.y > 0.7f && (PlayersLayer < 0 || !Physics.GetIgnoreLayerCollision(PlayersLayer, go.layer));
+                if (PlayersLayer >= 0 && Physics.GetIgnoreLayerCollision(PlayersLayer, go.layer)) continue;
+                return h.normal.y > 0.7f;
             }
             return false;
         }
