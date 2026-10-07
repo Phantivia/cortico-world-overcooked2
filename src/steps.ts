@@ -1,7 +1,8 @@
 /**
  * oc2_do 的步骤：参数校验、标签解析成对象 id、一步的称呼和完成时的说法。标签在排入时解析，之后
- * 指向同一个对象；对象被用掉或拿走时由插件在执行那一步时报原因。target 也可以写 find，执行到
- * 这一步时才按当时的厨房挑对象（resolveFind）。
+ * 指向同一个对象；对象被用掉或拿走时由插件在执行那一步时报原因。不写 target 而写 find（可带 near、
+ * shared）时，执行到这一步才按当时的厨房挑对象（resolveFind）。字段平铺不用联合类型，因为有的
+ * provider 会把 oneOf 收成第一个分支。
  */
 import type { Step, StepResult } from './executor.ts';
 import type { GameState, Item, Station } from './state.ts';
@@ -30,28 +31,15 @@ const FIND_TEXT: Record<FindKind, string> = {
   cooked: '煮好的锅所在的站点',
 };
 
-export const FIND_SCHEMA = {
-  type: 'object',
-  additionalProperties: false,
-  properties: {
-    find: { enum: [...FIND_KINDS], description: 'empty_counter 空台面，empty_board 空砧板，clean_plate 干净的空盘子，cooked 锅里东西煮好了的站点' },
-    near: { type: 'string', description: '挑离这个标签（或 partner）最近的；不写就挑离我最近的' },
-    shared: { type: 'boolean', description: '只挑我和队友两边都够得着的，交接用' },
-  },
-  required: ['find'],
-};
-
 export const STEP_SCHEMA = {
   type: 'object',
   additionalProperties: false,
   properties: {
     do: { enum: [...STEP_KINDS] },
-    target: {
-      oneOf: [
-        { type: 'string', description: '对象标签（如 B1、K2、P3），throw 也可写 partner' },
-        { ...FIND_SCHEMA, description: '执行到这一步时再挑：从我够得着的里面选' },
-      ],
-    },
+    target: { type: 'string', description: '对象标签（如 B1、K2、P3），throw 也可写 partner' },
+    find: { enum: [...FIND_KINDS], description: '不写 target 时，执行到这一步再从我够得着的里面挑最近的：empty_counter 空台面，empty_board 空砧板，clean_plate 干净的空盘子，cooked 锅里东西煮好了的站点' },
+    near: { type: 'string', description: '配合 find：挑离这个标签（或 partner）最近的；不写就挑离我最近的' },
+    shared: { type: 'boolean', description: '配合 find：只挑我和队友两边都够得着的，交接用' },
     x: { type: 'integer' },
     z: { type: 'integer' },
     until: { enum: [...WAIT_UNTIL] },
@@ -93,12 +81,16 @@ export function parseSteps(raw: unknown, state: GameState | null, ctx: RenderCtx
     const step: ParsedStep = { do: kind };
     for (const key of Object.keys(s)) if (!(key in STEP_SCHEMA.properties)) problems.push(`${n}：没有 ${key} 这个字段`);
     if (typeof s.dash === 'boolean') step.dash = s.dash;
-    if (s.target !== undefined && typeof s.target === 'object' && s.target !== null) {
-      const f = parseFind(s.target as Record<string, unknown>, state, ctx);
+    if (s.find !== undefined) {
+      if (s.target !== undefined) problems.push(`${n}：target 和 find 只写一个`);
+      const f = parseFind(s, state, ctx);
       if (typeof f === 'string') problems.push(`${n}：${f}`);
       else step.find = f;
-    } else if (s.target !== undefined) {
-      if (typeof s.target !== 'string') problems.push(`${n}：target 要是标签字符串，或者 {find:…}`);
+    } else if (s.near !== undefined || s.shared !== undefined) {
+      problems.push(`${n}：near、shared 要和 find 一起写`);
+    }
+    if (s.target !== undefined && s.find === undefined) {
+      if (typeof s.target !== 'string') problems.push(`${n}：target 要是标签`);
       else {
         const label = s.target.trim();
         step.target = label.toUpperCase();
@@ -107,22 +99,23 @@ export function parseSteps(raw: unknown, state: GameState | null, ctx: RenderCtx
         else step.id = id;
       }
     }
-    if (kind === 'serve' && step.id === undefined && s.target === undefined) {
+    const aimed = s.target !== undefined || s.find !== undefined;
+    if (kind === 'serve' && step.id === undefined && !aimed) {
       const pass = state?.stations.find(st => st.kind === 'pass');
       if (pass) { step.id = pass.id; step.target = ctx.labels.of(pass.id); }
       else problems.push(`${n}：这关找不到出餐口`);
     }
-    if (NEEDS_TARGET.has(kind) && s.target === undefined) problems.push(`${n}：${kind} 要写 target`);
+    if (NEEDS_TARGET.has(kind) && !aimed) problems.push(`${n}：${kind} 要写 target 或 find`);
     if (kind === 'go') {
       const hasXZ = Number.isInteger(s.x) && Number.isInteger(s.z);
       if (hasXZ) { step.x = s.x as number; step.z = s.z as number; }
-      else if (s.target === undefined) problems.push(`${n}：go 要写 target 或 x、z`);
+      else if (!aimed) problems.push(`${n}：go 要写 target、find 或 x、z`);
     }
     if (kind === 'wait') {
-      const until = (s.until ?? (s.target === undefined ? 'seconds' : undefined)) as ParsedStep['until'];
+      const until = (s.until ?? (aimed ? undefined : 'seconds')) as ParsedStep['until'];
       if (!until || !WAIT_UNTIL.includes(until)) problems.push(`${n}：wait 要写 until（${WAIT_UNTIL.join('/')}）`);
       else step.until = until;
-      if (until && until !== 'seconds' && s.target === undefined) problems.push(`${n}：等 ${until} 要写 target`);
+      if (until && until !== 'seconds' && !aimed) problems.push(`${n}：等 ${until} 要写 target 或 find`);
       if (until === 'seconds' && typeof s.seconds !== 'number') problems.push(`${n}：等时间要写 seconds`);
     }
     if (typeof s.seconds === 'number') step.seconds = Math.min(120, Math.max(0.1, s.seconds));
@@ -133,7 +126,6 @@ export function parseSteps(raw: unknown, state: GameState | null, ctx: RenderCtx
 }
 
 function parseFind(raw: Record<string, unknown>, state: GameState | null, ctx: RenderCtx): Find | string {
-  for (const key of Object.keys(raw)) if (!(key in FIND_SCHEMA.properties)) return `target 里没有 ${key} 这个字段`;
   if (!FIND_KINDS.includes(raw.find as FindKind)) return `find 只能是 ${FIND_KINDS.join('/')}`;
   const out: Find = { find: raw.find as FindKind };
   if (raw.shared !== undefined) {

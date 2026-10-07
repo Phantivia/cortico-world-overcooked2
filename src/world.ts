@@ -182,7 +182,7 @@ export class Overcooked2World implements World {
           'wash 洗水槽里的脏盘子（plates 只数，不写就洗完）；throw 把手里的食材扔向目标；go 走到目标旁或 x,z 格；' +
           'wait 等 target 到 until（cooked 煮好、chopped 切好、item 上面有东西、empty 空出来、plates 有盘子），或者 until=seconds 等 seconds 秒；' +
           'use 操作开关；extinguish 拿着灭火器灭目标的火。dash=true 路上冲刺。' +
-          'target 写场景描述里的标签，或者写 {find,near?,shared?} 让执行到这一步时再从我够得着的里面挑。' +
+          'target 写场景描述里的标签；不写 target 写 find（可加 near、shared），执行到这一步时再从我够得着的里面挑。' +
           'queue：replace（不写就是它）撤掉还没开始的任务，正在做的做完；append 排到最后；now 叫停正在做的，先做这个。cancel 写任务号，顺带撤掉那几个。',
         tags: ['act'],
         parameters: {

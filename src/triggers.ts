@@ -27,20 +27,27 @@ const UNTIL_TEXT: Record<Until, string> = {
   plates: '有干净盘子了',
 };
 
+const LEAF_PROPERTIES = {
+  target: { type: 'string' },
+  until: { enum: [...ARM_UNTIL], description: 'cooked 煮好 overdone 快糊 burnt 糊了 fire 着火 chopped 切好 item 上面有东西 empty 空了 plates 有干净盘子' },
+  order: {
+    type: 'object',
+    additionalProperties: false,
+    properties: { dish: { type: 'string' }, maxSeconds: { type: 'number', minimum: 0 } },
+  },
+};
+
+/** 组合里的每一项只写一个单独的条件；all、any 不再往下套。 */
+const LEAF_SCHEMA = { type: 'object', additionalProperties: false, properties: LEAF_PROPERTIES };
+
 export const CONDITION_SCHEMA = {
   type: 'object',
   description:
-    '三种写法选一种：{target:标签, until:…}；{order:{dish?:菜名, maxSeconds?:秒}} 有这道菜的订单（剩下不超过 maxSeconds 秒）；{all:[…]} 全部成立或 {any:[…]} 有一个成立。',
+    '三种写法选一种：{target:标签, until:…}；{order:{dish?:菜名, maxSeconds?:秒}} 有这道菜的订单（剩下不超过 maxSeconds 秒）；{all:[…]} 全部成立或 {any:[…]} 有一个成立，里面每项是前两种之一。',
   properties: {
-    target: { type: 'string' },
-    until: { enum: [...ARM_UNTIL], description: 'cooked 煮好 overdone 快糊 burnt 糊了 fire 着火 chopped 切好 item 上面有东西 empty 空了 plates 有干净盘子' },
-    order: {
-      type: 'object',
-      additionalProperties: false,
-      properties: { dish: { type: 'string' }, maxSeconds: { type: 'number', minimum: 0 } },
-    },
-    all: { type: 'array', minItems: 1, maxItems: 6, items: { type: 'object' } },
-    any: { type: 'array', minItems: 1, maxItems: 6, items: { type: 'object' } },
+    ...LEAF_PROPERTIES,
+    all: { type: 'array', minItems: 1, maxItems: 6, items: LEAF_SCHEMA },
+    any: { type: 'array', minItems: 1, maxItems: 6, items: LEAF_SCHEMA },
   },
   additionalProperties: false,
 };
@@ -52,7 +59,7 @@ export function parseCondition(raw: unknown, resolve: (label: string) => number 
   for (const k of keys) if (!['target', 'until', 'order', 'all', 'any'].includes(k)) return `when 里没有 ${k} 这个字段`;
   if (r.all !== undefined || r.any !== undefined) {
     if (keys.length !== 1) return 'all、any 要单独写';
-    if (depth >= 2) return 'all、any 最多套两层';
+    if (depth >= 1) return 'all、any 里面不能再套 all、any';
     const list = (r.all ?? r.any) as unknown;
     if (!Array.isArray(list) || !list.length || list.length > 6) return 'all、any 要写 1 到 6 个条件';
     const of: Condition[] = [];

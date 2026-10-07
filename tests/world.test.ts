@@ -153,7 +153,7 @@ describe('Overcooked2World', () => {
     plugin.send({ t: 'state', ...splitAtX0(state) });
     await until(() => host.deferred.length > 1);
     plugin.onRequest = r => (r.op === 'act' ? { ok: true, item: { id: 77, kind: 'ingredient', name: 'Cucumber', chop: 1 } } : { ok: true });
-    await tool(world, 'oc2_do').handler({ steps: [{ do: 'put', target: { find: 'empty_counter', shared: true, near: 'partner' } }] }, { role: 'main', log: host.log });
+    await tool(world, 'oc2_do').handler({ steps: [{ do: 'put', find: 'empty_counter', shared: true, near: 'partner' }] }, { role: 'main', log: host.log });
     await until(() => host.events.some(e => e.type === 'overcooked2.task'));
     // 中间一列都是两边够得着的空台面；离队友 (-2,0) 最近的有 (0,1) 和 (0,-1)，同距离取 id 小的。
     const middle = state.stations.filter(s => s.kind === 'counter' && s.cell[0] === 0 && !s.item && Math.abs(s.cell[1]) === 1).map(s => s.id);
