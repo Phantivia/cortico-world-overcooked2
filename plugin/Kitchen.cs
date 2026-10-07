@@ -156,6 +156,27 @@ namespace CorticoOvercooked2
 
         public Vector3 CellCenter(int x, int z) => Grid.GetPosFromGridLocation(new GridIndex(x, 0, z));
 
+        /// <summary>
+        /// Cells up to this far outside the placement grid count when there is floor: some kitchens
+        /// have a walkway past the grid's edge (1-3's way round below the bin).
+        /// </summary>
+        public const int GridMargin = 3;
+
+        public bool InGrid(int x, int z)
+        {
+            var h = Grid.GetGridHalfSize();
+            return x >= -h.X && x <= h.X && z >= -h.Z && z <= h.Z;
+        }
+
+        public bool InReach(int x, int z)
+        {
+            var h = Grid.GetGridHalfSize();
+            return x >= -h.X - GridMargin && x <= h.X + GridMargin && z >= -h.Z - GridMargin && z <= h.Z + GridMargin;
+        }
+
+        /// <summary>The grid's occupant of a cell; cells outside the grid have none.</summary>
+        public GameObject Occupant(int x, int z) => InGrid(x, z) ? Grid.GetGridOccupant(new GridIndex(x, 0, z)) : null;
+
         // ---- chefs ---------------------------------------------------------------------
 
         public IEnumerable<PlayerControls> Chefs()
@@ -468,7 +489,6 @@ namespace CorticoOvercooked2
         /// </summary>
         private string Layout()
         {
-            var half = Grid.GetGridHalfSize();
             var cells = new Dictionary<long, char>();
             var region = new Dictionary<long, char>();
             PlayerControls reference = null;
@@ -493,7 +513,7 @@ namespace CorticoOvercooked2
                     {
                         int x = at[0] + dx[i], z = at[1] + dz[i];
                         long key = Key(x, z);
-                        if (x < -half.X || x > half.X || z < -half.Z || z > half.Z || region.ContainsKey(key)) continue;
+                        if (!InReach(x, z) || region.ContainsKey(key)) continue;
                         char ch = cells.TryGetValue(key, out var known) ? known : CellChar(x, z);
                         if (ch == ' ') continue;
                         cells[key] = ch;
@@ -542,7 +562,7 @@ namespace CorticoOvercooked2
         {
             var index = new GridIndex(x, 0, z);
             var center = Grid.GetPosFromGridLocation(index);
-            var occupant = Grid.GetGridOccupant(index);
+            var occupant = Occupant(x, z);
             if (occupant != null)
             {
                 var surface = MovingFloor(occupant);
@@ -597,7 +617,7 @@ namespace CorticoOvercooked2
             foreach (var h in hits)
                 items.Add(new JObj().Str("name", h.collider.gameObject.name).Str("layer", LayerMask.LayerToName(h.collider.gameObject.layer))
                     .Bool("trigger", h.collider.isTrigger).Num("y", h.point.y).Num("normalY", h.normal.y).ToString());
-            var occupant = Grid.GetGridOccupant(new GridIndex(x, 0, z));
+            var occupant = Occupant(x, z);
             var o = new JObj().Num("centerY", center.y).Str("occupant", occupant != null ? occupant.name : null).Bool("floor", IsFloor(center)).Raw("hits", JObj.Array(items));
             var chef = BotChef() ?? Chefs().FirstOrDefault();
             if (chef != null)

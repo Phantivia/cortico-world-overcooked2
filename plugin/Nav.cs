@@ -33,13 +33,10 @@ namespace CorticoOvercooked2
 
         public static bool Walkable(Kitchen k, PlayerControls chef, int x, int z)
         {
-            var g = k.Grid;
-            var h = g.GetGridHalfSize();
-            if (x < -h.X || x > h.X || z < -h.Z || z > h.Z) return false;
-            var index = new GridIndex(x, 0, z);
-            var occupant = g.GetGridOccupant(index);
+            if (!k.InReach(x, z)) return false;
+            var occupant = k.Occupant(x, z);
             if (occupant != null && Kitchen.MovingFloor(occupant) == null) return false;
-            var center = g.GetPosFromGridLocation(index);
+            var center = k.CellCenter(x, z);
             if (occupant == null && !Kitchen.IsFloor(center)) return false;
             return BodyClear(chef, new Vector3(center.x, chef.transform.position.y, center.z));
         }
@@ -119,12 +116,10 @@ namespace CorticoOvercooked2
         /// <summary>Floor or moving floor with no other grid occupant; no body or edge check.</summary>
         public static bool Standable(Kitchen k, int x, int z)
         {
-            var g = k.Grid;
-            var h = g.GetGridHalfSize();
-            if (x < -h.X || x > h.X || z < -h.Z || z > h.Z) return false;
-            var occupant = g.GetGridOccupant(new GridIndex(x, 0, z));
+            if (!k.InReach(x, z)) return false;
+            var occupant = k.Occupant(x, z);
             if (occupant != null) return Kitchen.MovingFloor(occupant) != null;
-            return Kitchen.IsFloor(g.GetPosFromGridLocation(new GridIndex(x, 0, z)));
+            return Kitchen.IsFloor(k.CellCenter(x, z));
         }
 
         /// <summary>Shortest route from start to any goal cell, excluding start; null if none.</summary>

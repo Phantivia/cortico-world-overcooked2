@@ -637,7 +637,7 @@ namespace CorticoOvercooked2
                 int gx = (int)x.Value, gz = (int)z.Value;
                 if (!Nav.Walkable(_k, ChefNow(), gx, gz))
                 {
-                    var occupant = _k.Grid.GetGridOccupant(new GridIndex(gx, 0, gz));
+                    var occupant = _k.Occupant(gx, gz);
                     var station = occupant != null ? _k.StationOf(occupant) : null;
                     if (station != null) Fail(o, $"({gx},{gz}) 站不了人，那一格是站点", null);
                     else Fail(o, occupant != null ? $"({gx},{gz}) 站不了人，那一格被占着" : $"({gx},{gz}) 站不了人，那里没有地面或放不下厨师");
