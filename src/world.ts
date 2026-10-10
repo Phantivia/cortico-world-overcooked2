@@ -20,7 +20,7 @@ import { Labels, locate } from './labels.ts';
 import { chefName, clock, itemText, mapText, nameOf, orderText, segments, stationName, stationText, type RenderCtx } from './render.ts';
 import { cellReachable, chefOf, sides } from './sides.ts';
 import type { GameEvent, GameState } from './state.ts';
-import { describe, parseSteps, pluginStep, resolveFind, stepResult, STEP_SCHEMA, type ParsedStep } from './steps.ts';
+import { describe, findCondText, handsProblem, parseSteps, pluginStep, resolveFind, stepResult, STEP_SCHEMA, type Find, type ParsedStep } from './steps.ts';
 import { CONDITION_SCHEMA, describeCondition, evaluate, parseCondition, Watches, type Watch, type WatchEnd } from './triggers.ts';
 
 const ENV_PROMPT_FILE = fileURLToPath(new URL('./ENV_PROMPT.md', import.meta.url));
@@ -28,6 +28,8 @@ const TAG = '[厨房]';
 /** 一步最长：走位 20 秒加洗碗 40 秒，留出余量。 */
 const STEP_TIMEOUT_MS = 90_000;
 const REQUEST_TIMEOUT_MS = 10_000;
+/** 插件每 0.2 秒发一帧状态；等 find 时按这个间隔重挑。 */
+const STATE_POLL_MS = 200;
 const JOIN_RETRY_MS = 3000;
 /** 这么短时间内再次 oc2_look 只补变化。 */
 const LOOK_REPEAT_MS = 15_000;
@@ -260,6 +262,13 @@ export class Overcooked2World implements World {
     if (typeof queue !== 'string') problems.push(queue.problem);
     const cancel = args.cancel ?? [];
     if (!Array.isArray(cancel) || cancel.some(n => !Number.isInteger(n))) problems.push('cancel 要写任务号数组');
+    if (!problems.length && typeof queue === 'string') {
+      // 排在正在做的任务后面时，开始那一刻手里是什么要等它做完才知道。
+      const startsNow = queue === 'now' || this.executor.idle;
+      const me = this.state ? chefOf(this.state, 'bot') : undefined;
+      const hands = handsProblem(steps, startsNow && me ? me.held ?? null : undefined, this.state, this.ctx());
+      if (hands) problems.push(hands);
+    }
     if (problems.length || typeof queue !== 'string') {
       const text = `没有排入：${problems.join('；')}`;
       // 这一轮随 oc2_do 结束了，回执要等下一批消息才读到；没排上的任务不会再有结果事件，单独叫醒一次。
@@ -279,10 +288,12 @@ export class Overcooked2World implements World {
     if (!s || s.phase === 'other') return { text: '不在厨房里，没有可盯的东西。', failed: true };
     const ctx = this.ctx();
     const problems: string[] = [];
-    const when = parseCondition(args.when, label => ctx.labels.resolve(label));
+    const when = parseCondition(args.when, ctx);
     if (typeof when === 'string') problems.push(when);
     const { steps, problems: stepProblems } = parseSteps(args.steps, s, ctx);
     problems.push(...stepProblems);
+    const hands = stepProblems.length ? null : handsProblem(steps, undefined, s, ctx);
+    if (hands) problems.push(hands);
     const queue = parseQueue(args.queue, 'now');
     if (typeof queue !== 'string') problems.push(queue.problem);
     const max = args.maxFirings ?? 1;
@@ -405,6 +416,7 @@ export class Overcooked2World implements World {
   private async runStep(queued: ParsedStep, signal: AbortSignal): Promise<{ ok: boolean; detail: string }> {
     if (signal.aborted) return { ok: false, detail: '已取消' };
     let step = queued;
+    if (queued.do === 'wait' && queued.find && queued.until === undefined) return this.waitForFind(queued.find, signal);
     if (queued.find) {
       const picked = resolveFind(queued.find, this.state, this.ctx());
       if ('why' in picked) return { ok: false, detail: picked.why };
@@ -424,6 +436,19 @@ export class Overcooked2World implements World {
       if (fact) result.detail += `。现在 ${fact}`;
     }
     return result;
+  }
+
+  /** wait 写 find 不写 until：每来一帧状态挑一次，挑到就算这一步完成；和插件里的一步一样最多等 STEP_TIMEOUT_MS。 */
+  private async waitForFind(f: Find, signal: AbortSignal): Promise<{ ok: boolean; detail: string }> {
+    const ctx = this.ctx();
+    const until = Date.now() + STEP_TIMEOUT_MS;
+    for (;;) {
+      if (signal.aborted) return { ok: false, detail: '已取消' };
+      const picked = this.state ? resolveFind(f, this.state, ctx) : null;
+      if (picked && 'id' in picked) return { ok: true, detail: `有了${findCondText(f)}：${nameOf(picked.id, this.state, ctx)}` };
+      if (Date.now() >= until) return { ok: false, detail: `等了 ${STEP_TIMEOUT_MS / 1000} 秒还没有${findCondText(f)}` };
+      await new Promise(resolve => setTimeout(resolve, STATE_POLL_MS));
+    }
   }
 
   private onTaskReport(r: TaskReport): void {

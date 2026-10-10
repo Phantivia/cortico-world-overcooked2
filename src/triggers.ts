@@ -6,7 +6,7 @@ import type { QueueMode } from './executor.ts';
 import { dishName } from './names.ts';
 import { nameOf, type RenderCtx } from './render.ts';
 import type { GameState, Item } from './state.ts';
-import type { ParsedStep } from './steps.ts';
+import { FIND_KINDS, findCondText, findExists, parseFind, type Find, type ParsedStep } from './steps.ts';
 
 export const ARM_UNTIL = ['cooked', 'overdone', 'burnt', 'fire', 'chopped', 'item', 'empty', 'plates'] as const;
 type Until = (typeof ARM_UNTIL)[number];
@@ -14,6 +14,7 @@ type Until = (typeof ARM_UNTIL)[number];
 export type Condition =
   | { kind: 'target'; id: number; until: Until }
   | { kind: 'order'; dish?: string; maxSeconds?: number }
+  | { kind: 'find'; find: Find }
   | { kind: 'all' | 'any'; of: Condition[] };
 
 const UNTIL_TEXT: Record<Until, string> = {
@@ -35,6 +36,9 @@ const LEAF_PROPERTIES = {
     additionalProperties: false,
     properties: { dish: { type: 'string' }, maxSeconds: { type: 'number', minimum: 0 } },
   },
+  find: { enum: [...FIND_KINDS], description: '有我够得着的这种站点就算成立，种类同 oc2_do 的 find' },
+  of: { type: 'string', description: '配合 find 的 cooked、chopped：食材中文名' },
+  shared: { type: 'boolean', description: '配合 find：只算两边都够得着的' },
 };
 
 /** 组合里的每一项只写一个单独的条件；all、any 不再往下套。 */
@@ -43,7 +47,7 @@ const LEAF_SCHEMA = { type: 'object', additionalProperties: false, properties: L
 export const CONDITION_SCHEMA = {
   type: 'object',
   description:
-    '三种写法选一种：{target:标签, until:…}；{order:{dish?:菜名, maxSeconds?:秒}} 有这道菜的订单（剩下不超过 maxSeconds 秒）；{all:[…]} 全部成立或 {any:[…]} 有一个成立，里面每项是前两种之一。',
+    '四种写法选一种：{target:标签, until:…}；{order:{dish?:菜名, maxSeconds?:秒}} 有这道菜的订单（剩下不超过 maxSeconds 秒）；{find:…, of?, shared?} 有我够得着的这种站点（比如任何一口锅煮好了）；{all:[…]} 全部成立或 {any:[…]} 有一个成立，里面每项是前三种之一。',
   properties: {
     ...LEAF_PROPERTIES,
     all: { type: 'array', minItems: 1, maxItems: 6, items: LEAF_SCHEMA },
@@ -52,11 +56,11 @@ export const CONDITION_SCHEMA = {
   additionalProperties: false,
 };
 
-export function parseCondition(raw: unknown, resolve: (label: string) => number | undefined, depth = 0): Condition | string {
+export function parseCondition(raw: unknown, ctx: RenderCtx, depth = 0): Condition | string {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return 'when 要是对象';
   const r = raw as Record<string, unknown>;
   const keys = Object.keys(r);
-  for (const k of keys) if (!['target', 'until', 'order', 'all', 'any'].includes(k)) return `when 里没有 ${k} 这个字段`;
+  for (const k of keys) if (!['target', 'until', 'order', 'find', 'of', 'shared', 'all', 'any'].includes(k)) return `when 里没有 ${k} 这个字段`;
   if (r.all !== undefined || r.any !== undefined) {
     if (keys.length !== 1) return 'all、any 要单独写';
     if (depth >= 1) return 'all、any 里面不能再套 all、any';
@@ -64,7 +68,7 @@ export function parseCondition(raw: unknown, resolve: (label: string) => number 
     if (!Array.isArray(list) || !list.length || list.length > 6) return 'all、any 要写 1 到 6 个条件';
     const of: Condition[] = [];
     for (const item of list) {
-      const c = parseCondition(item, resolve, depth + 1);
+      const c = parseCondition(item, ctx, depth + 1);
       if (typeof c === 'string') return c;
       of.push(c);
     }
@@ -78,9 +82,16 @@ export function parseCondition(raw: unknown, resolve: (label: string) => number 
     if (o.maxSeconds !== undefined && typeof o.maxSeconds !== 'number') return 'order.maxSeconds 要是秒数';
     return { kind: 'order', dish: o.dish as string | undefined, maxSeconds: o.maxSeconds as number | undefined };
   }
-  if (typeof r.target !== 'string') return 'when 要写 target 和 until，或者 order、all、any';
+  if (r.find !== undefined) {
+    if (r.target !== undefined || r.until !== undefined) return 'find 和 target、until 只写一种';
+    // 条件不收 near（上面的字段检查已挡掉），parseFind 用不到状态。
+    const f = parseFind(r, null, ctx);
+    return typeof f === 'string' ? f : { kind: 'find', find: f };
+  }
+  if (r.of !== undefined || r.shared !== undefined) return 'of、shared 要和 find 一起写';
+  if (typeof r.target !== 'string') return 'when 要写 target 和 until，或者 find、order、all、any';
   if (!ARM_UNTIL.includes(r.until as Until)) return `until 只能是 ${ARM_UNTIL.join('/')}`;
-  const id = resolve(r.target);
+  const id = ctx.labels.resolve(r.target);
   if (id === undefined) return `现在没有标签 ${r.target}`;
   return { kind: 'target', id, until: r.until as Until };
 }
@@ -91,6 +102,8 @@ export function describeCondition(c: Condition, state: GameState | null, ctx: Re
       return `${nameOf(c.id, state, ctx)} ${UNTIL_TEXT[c.until]}`;
     case 'order':
       return `有${c.dish ?? '任意一道菜'}的订单${c.maxSeconds !== undefined ? `剩下不超过 ${c.maxSeconds} 秒` : ''}`;
+    case 'find':
+      return `有${findCondText(c.find)}`;
     case 'all':
       return c.of.map(x => describeCondition(x, state, ctx)).join('，而且');
     case 'any':
@@ -117,6 +130,8 @@ export function evaluate(c: Condition, state: GameState): boolean {
     case 'order':
       return state.orders.some(o =>
         (c.dish === undefined || o.dish === c.dish || dishName(o.dish) === c.dish) && (c.maxSeconds === undefined || o.remaining <= c.maxSeconds));
+    case 'find':
+      return findExists(c.find, state);
     case 'target': {
       const at = lookup(state, c.id);
       if (!at) return false;
