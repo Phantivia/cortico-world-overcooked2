@@ -91,6 +91,8 @@ export class Overcooked2World implements World {
       this.detail = '';
       this.executor.resume();
       this.anchorPending = true;
+      const identity = { op: 'identity', botName: this.cfg.botGameName, partnerName: this.cfg.partnerGameName, botFirstColour: this.cfg.botFirstColour };
+      this.bridge.request(identity, REQUEST_TIMEOUT_MS).catch(err => this.host?.log.warn(`overcooked2 identity: ${String(err)}`));
       void this.push('connection', '游戏插件已连接。', 'flush');
     });
     this.bridge.on('mismatch', (f: { protocol?: number }) => {

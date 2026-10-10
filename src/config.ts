@@ -6,6 +6,12 @@ export interface Overcooked2ConfigSection {
   port: number;
   /** 一起玩的人在事件和场景描述里的称呼。 */
   partnerName: string;
+  /** 游戏里 bot 那位玩家显示的名字；空着就用游戏给的。 */
+  botGameName: string;
+  /** 游戏里一号玩家（一起玩的人）显示的名字；空着就用游戏给的。 */
+  partnerGameName: string;
+  /** bot 用一号玩家的蓝色，一起玩的人用红色；关掉就按加入顺序（一号蓝、二号红）。 */
+  botFirstColour: boolean;
   /** 游戏停在主菜单且 bot 还没加入时自动加入为本地玩家。 */
   autoJoin: boolean;
   /** 回合进行中 bot 的任务队列空了这么久就唤醒提醒，仍空着时每隔三倍时长再提醒；0 关闭。 */
@@ -24,6 +30,9 @@ export const OVERCOOKED2_DEFAULTS: Overcooked2ConfigSection = {
   enabled: false,
   port: 47640,
   partnerName: '队友',
+  botGameName: '',
+  partnerGameName: '',
+  botFirstColour: true,
   autoJoin: true,
   idleNudgeSec: 10,
   orderWarnSec: 20,
@@ -41,6 +50,9 @@ export const OVERCOOKED2_CONFIG_GROUP: ConfigGroup = {
     properties: {
       'worlds.overcooked2.port': { type: 'integer', minimum: 1, maximum: 65535, title: '插件端口' },
       'worlds.overcooked2.partnerName': { type: 'string', title: '队友称呼', 'x-hot': true },
+      'worlds.overcooked2.botGameName': { type: 'string', title: '游戏里 bot 的名字' },
+      'worlds.overcooked2.partnerGameName': { type: 'string', title: '游戏里队友的名字' },
+      'worlds.overcooked2.botFirstColour': { type: 'boolean', title: 'bot 用蓝色、队友用红色' },
       'worlds.overcooked2.autoJoin': { type: 'boolean', title: '主菜单自动加入', 'x-hot': true },
       'worlds.overcooked2.idleNudgeSec': { type: 'integer', minimum: 0, maximum: 120, title: '空闲提醒（秒）', 'x-hot': true },
       'worlds.overcooked2.orderWarnSec': { type: 'integer', minimum: 0, maximum: 120, title: '订单临期提醒（秒）', 'x-hot': true },

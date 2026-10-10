@@ -17,7 +17,7 @@ Removing `winhttp.dll`, `doorstop_config.ini` and `BepInEx/` restores the unmodi
 
 ## Playing
 
-1. Enable the World (`worlds.overcooked2.enabled`) and set `partnerName` to the name the operator goes by (the same name the ASR World uses for the microphone).
+1. Enable the World (`worlds.overcooked2.enabled`) and set `partnerName` to the name the operator goes by (the same name the ASR World uses for the microphone). `botGameName` and `partnerGameName` set the names the game shows for the two players; `botFirstColour` (default on) gives the bot player one's blue chef and the operator red.
 2. Start the game and press A / Space on the title screen; the operator is player 1 and drives all menus.
 3. On the main menu the World joins the bot's pad as player 2 (`autoJoin`). The game accepts new local players only on the main menu; joining later needs a return to it.
 4. Pick a level as usual. With two players each gets one chef.

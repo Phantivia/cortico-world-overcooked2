@@ -38,6 +38,7 @@ Owner: `plugin/Plugin.cs`, `src/bridge.ts`, `src/state.ts`.
 |---|---|---|
 | `join` / `leave` | who? | 虚拟手柄作为本地玩家加入 / 退出；只在主菜单有效，一号玩家要先进入 |
 | `act` | step, who? | 执行一步，做完才回复；字段见下 |
+| `identity` | botName?, partnerName?, botFirstColour? | 两位本地玩家在游戏里显示的名字（空着不改）；botFirstColour 让 bot 用一号的蓝色、一号玩家用红色。插件每 0.5 秒把这些写回服务端的玩家数据，厨师进关卡时取颜色 |
 | `halt` | who? | 停下当前一步（它以「已取消」回复）、松开所有按键 |
 | `look` | width? | 回复带 `png`（base64） |
 | `press` | button?, x?, y?, seconds?, who? | 测试用：按住手柄原始按键（InControl 名称，如 `Action1`）和摇杆 |

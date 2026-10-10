@@ -49,6 +49,7 @@ namespace CorticoOvercooked2
         /// patching waits for the game's managers and InControl.</summary>
         internal static bool Ready;
         private float _nextReadyCheck;
+        private float _nextIdentity;
 
         private void Install()
         {
@@ -85,6 +86,11 @@ namespace CorticoOvercooked2
                 }
             }
             foreach (var actor in _actors.Values) actor.Tick();
+            if (Time.realtimeSinceStartup >= _nextIdentity)
+            {
+                _nextIdentity = Time.realtimeSinceStartup + 0.5f;
+                Identity.Apply();
+            }
             Lifecycle();
             foreach (var ev in Hooks.Drain())
             {
@@ -171,6 +177,10 @@ namespace CorticoOvercooked2
                     if (why != null) Reply(request.From, id, false, why);
                     return;
                 }
+                case "identity":
+                    Identity.Set(Req.Str(f, "botName"), Req.Str(f, "partnerName"), Req.Bool(f, "botFirstColour"));
+                    Reply(request.From, id, true, null);
+                    return;
                 case "halt":
                     _actors[who].Halt();
                     Reply(request.From, id, true, null);
