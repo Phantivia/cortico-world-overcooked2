@@ -260,23 +260,39 @@ function takenThing(step: ParsedStep, state: GameState | null, ctx: RenderCtx): 
   return { what: nameOf(step.id, state, ctx) };
 }
 
-/** put 的目标是不是炉灶：拿着盘子或锅对炉灶放，盛完（或放不上）都还拿在手里。 */
-function aimsAtStove(step: ParsedStep, state: GameState | null): boolean {
+/**
+ * put 的目标是不是炉灶或另一只盘子、锅：拿着盘子对它放，游戏在两边的 PlacementContainer 之间倒内容
+ * （从锅里盛出来，或者手里盘子里的倒进对面的盘子），手里的盘子不动；炉灶上没锅时放不上。
+ */
+function aimsAtContainer(step: ParsedStep, state: GameState | null): boolean {
+  // 盘子堆（回盘口、沥水架）由 CleanPlateStack 处理，不算在内。
   if (step.find) return step.find.find === 'cooked' || step.find.find === 'empty_pot';
-  return state?.stations.find(s => s.id === step.id)?.kind === 'stove';
+  const st = state?.stations.find(s => s.id === step.id);
+  const item = st?.item;
+  return st?.kind === 'stove' || (item?.kind === 'plate' && item.stack === undefined) || item?.kind === 'pot' || item?.kind === 'pan';
 }
 
 /**
- * 按游戏规则推演一串步骤里手上的东西，找出一定会卡住的第一步：拿、切、洗时手里还有东西，或者放、
- * 上菜、扔时手里是空的。start 是开始时手里的东西（null 空着，undefined 不知道，比如排在别的任务后面）。
- * 只认推得准的：拿起之后是拿着；拿着盘子或锅对炉灶放之后还拿着；拿着食材放、上菜、扔之后是空的；
- * 其余的放推不准，之后不再判。
+ * put 的目标上此刻是不是一份食材：拿着盘子对它放，游戏走 AttachStation 的 UnderOccupant（海苔、米、
+ * 切好的鱼带 IngredientToContainerBehaviour），盘子落到那个站点上、食材装进盘子，手里空了。
+ */
+function aimsAtIngredient(step: ParsedStep, state: GameState | null): boolean {
+  if (step.find) return step.find.find === 'chopped';
+  return state?.stations.find(s => s.id === step.id)?.item?.kind === 'ingredient';
+}
+
+/**
+ * 按游戏规则推演一串步骤里手上的东西，找出一定会卡住的第一步：拿、切、洗时手里还有东西（游戏里手上
+ * 有东西时按键只会是放），或者放、上菜、扔时手里是空的。start 是开始时手里的东西（null 空着，
+ * undefined 不知道，比如排在别的任务后面）。只认推得准的：拿起之后是拿着；拿着盘子对炉灶、盘子、锅
+ * 放之后还拿着；拿着盘子对放着食材的站点放、拿着食材放、上菜、扔之后是空的；其余的放推不准，之后不再判。
  */
 export function handsProblem(steps: ParsedStep[], start: Item | null | undefined, state: GameState | null, ctx: RenderCtx): string | null {
   let hand: Hand = start === undefined ? { s: 'unknown' } : start === null ? { s: 'empty' } : { s: 'held', what: `${itemText(start, ctx)}（排的这一刻就在手里）`, kind: start.kind };
   for (const [i, step] of steps.entries()) {
     const n = `第 ${i + 1} 步「${describe(step, state, ctx)}」`;
-    if ((step.do === 'take' || step.do === 'chop' || step.do === 'wash') && hand.s === 'held') return `${n}时手里还拿着${hand.what}，拿东西、切、洗都要空手，先 put 放下`;
+    if (step.do === 'take' && hand.s === 'held') return `${n}时手里还拿着${hand.what}。手里有东西时按键只会是放：要把台面或砧板上的食材装进手里的盘子，就对那里 put（盘子会落在那里）；不然先 put 放下再拿`;
+    if ((step.do === 'chop' || step.do === 'wash') && hand.s === 'held') return `${n}时手里还拿着${hand.what}，切、洗都要空手，先 put 放下`;
     if ((step.do === 'put' || step.do === 'serve' || step.do === 'throw') && hand.s === 'empty') return `${n}时手里是空的，先 take 拿起要放的东西`;
     switch (step.do) {
       case 'take': {
@@ -285,7 +301,8 @@ export function handsProblem(steps: ParsedStep[], start: Item | null | undefined
         break;
       }
       case 'put':
-        if (hand.s === 'held' && (hand.kind === 'plate' || hand.kind === 'pot' || hand.kind === 'pan') && aimsAtStove(step, state)) hand = { s: 'held', what: `第 ${i + 1} 步对炉灶放完还在手上的${hand.kind === 'plate' ? '盘子' : '锅'}`, kind: hand.kind };
+        if (hand.s === 'held' && hand.kind === 'plate' && aimsAtContainer(step, state)) hand = { s: 'held', what: `第 ${i + 1} 步「${describe(step, state, ctx)}」之后还在手上的盘子`, kind: 'plate' };
+        else if (hand.s === 'held' && hand.kind === 'plate' && aimsAtIngredient(step, state)) hand = { s: 'empty' };
         else if (hand.s === 'held' && hand.kind === 'ingredient') hand = { s: 'empty' };
         else hand = { s: 'unknown' };
         break;
