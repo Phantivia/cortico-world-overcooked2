@@ -276,7 +276,7 @@ namespace CorticoOvercooked2
         private IEnumerator Walk(Outcome o, HashSet<long> goals, bool dash, float timeoutSec)
         {
             float deadline = Time.realtimeSinceStartup + timeoutSec;
-            int replans = 0;
+            int replans = 0, looks = 0;
             float nextDash = 0f;
             float waitingForChefSince = -1f;
             bool loose = false;
@@ -311,8 +311,9 @@ namespace CorticoOvercooked2
                 if (route == null)
                 {
                     // Not on the map from here. Physics readings can drop a cell for a moment, so look
-                    // again shortly before deciding.
-                    if (replans++ < 3 && Time.realtimeSinceStartup < deadline)
+                    // again shortly before deciding; in a kitchen that moves, keep looking until the
+                    // walk's deadline, since the way opens when the part comes round.
+                    if ((looks++ < 3 || _k.Moving) && Time.realtimeSinceStartup < deadline)
                     {
                         Pad.Stop();
                         for (float until = Time.realtimeSinceStartup + 0.4f; Time.realtimeSinceStartup < until;) yield return null;
@@ -321,7 +322,7 @@ namespace CorticoOvercooked2
                     route = Nav.Route(_k, chef, start, goals, others, Nav.Mode.Loose);
                     if (route == null)
                     {
-                        Fail(o, "走不到：按地图从我站的地方没有路通到那里（中间隔着台面或墙）");
+                        Fail(o, _k.Moving ? $"走不到：这关厨房会动，等了 {timeoutSec:0} 秒路还没通（中间隔着台面或墙）" : "走不到：按地图从我站的地方没有路通到那里（中间隔着台面或墙）");
                         yield break;
                     }
                     loose = true;
@@ -360,6 +361,7 @@ namespace CorticoOvercooked2
                 }
                 Pad.Stop();
                 if (!replan) yield break;
+                if (loose && _k.Moving && Time.realtimeSinceStartup < deadline) continue;
                 if (loose) { Fail(o, "走不到：按地图从我站的地方没有路通到那里，硬走也被挡住了"); yield break; }
                 if (replans > 8) { Fail(o, "路上一直被挡住，换了几次路线都走不动"); yield break; }
             }

@@ -278,7 +278,9 @@ function aimsAtContainer(step: ParsedStep, state: GameState | null): boolean {
  */
 function aimsAtIngredient(step: ParsedStep, state: GameState | null): boolean {
   if (step.find) return step.find.find === 'chopped';
-  return state?.stations.find(s => s.id === step.id)?.item?.kind === 'ingredient';
+  // 面包、玉米饼这类底料有自己的放置处理器，盘子对它放不走垫在下面那一路。
+  const item = state?.stations.find(s => s.id === step.id)?.item;
+  return item?.kind === 'ingredient' && !item.base;
 }
 
 /**

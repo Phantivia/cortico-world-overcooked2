@@ -52,7 +52,8 @@ export function itemText(item: Item, ctx: RenderCtx): string {
       const name = ingredientName(item.name);
       if (item.chop !== undefined && item.chop < 1) return item.chop > 0 ? `生${name}（切了 ${pct(item.chop)}%）` : `生${name}`;
       const cooked = cookText(item);
-      return cooked ? `${name}（${cooked}）` : name;
+      const on = item.contents?.length ? `[${contentsText(item.contents)}]` : '';
+      return cooked ? `${name}${on}（${cooked}）` : `${name}${on}`;
     }
     case 'plate': {
       if (item.stack !== undefined) return `${item.dirty ? '脏' : '干净'}盘子×${item.stack}`;

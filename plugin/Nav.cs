@@ -21,6 +21,12 @@ namespace CorticoOvercooked2
         private static readonly Collider[] Overlaps = new Collider[32];
         /// <summary>Capsules are lifted this far so floor and travelator tops under the feet do not count.</summary>
         private const float Lift = 0.1f;
+        /// <summary>
+        /// Most floor height a chef climbs between neighbouring cells. Wizard 3-1's stairs rise 0.43 m
+        /// a step on 0.8 m treads, so neighbouring cell centres on them differ by up to about 0.6 m;
+        /// its first floor is 1.2 m above the ground floor and is reached only by those stairs.
+        /// </summary>
+        private const float MaxRise = 0.7f;
         private static readonly int[] Dx = { 1, -1, 0, 0 };
         private static readonly int[] Dz = { 0, 0, 1, -1 };
 
@@ -38,7 +44,22 @@ namespace CorticoOvercooked2
             if (occupant != null && Kitchen.MovingFloor(occupant) == null) return false;
             var center = k.CellCenter(x, z);
             if (occupant == null && !Kitchen.IsFloor(center)) return false;
-            return BodyClear(chef, new Vector3(center.x, chef.transform.position.y, center.z));
+            return BodyClear(chef, StandAt(k, chef, x, z));
+        }
+
+        /// <summary>
+        /// Where the chef's transform would be standing on that cell: the cell's floor height plus how
+        /// far the chef's transform is above the floor it stands on now. The chef's own height when
+        /// either floor is not found.
+        /// </summary>
+        public static Vector3 StandAt(Kitchen k, PlayerControls chef, int x, int z)
+        {
+            var c = k.CellCenter(x, z);
+            var pos = chef.transform.position;
+            float? here = Kitchen.FloorHeight(new Vector3(pos.x, c.y, pos.z));
+            float? there = Kitchen.FloorHeight(c);
+            float y = here.HasValue && there.HasValue ? there.Value + (pos.y - here.Value) : pos.y;
+            return new Vector3(c.x, y, c.z);
         }
 
         private static bool BodyClear(PlayerControls chef, Vector3 at) => BodyBlocker(chef, at) == null;
@@ -85,14 +106,16 @@ namespace CorticoOvercooked2
         {
             var body = chef.GetComponent<Collider>();
             if (body == null) return true;
-            var a3 = k.CellCenter(from.X, from.Z);
-            var b3 = k.CellCenter(to.X, to.Z);
-            var origin = new Vector3(a3.x, chef.transform.position.y, a3.z);
-            var diff = new Vector3(b3.x - a3.x, 0f, b3.z - a3.z);
+            var origin = StandAt(k, chef, from.X, from.Z);
+            var diff = StandAt(k, chef, to.X, to.Z) - origin;
+            float rise = Mathf.Abs(diff.y);
+            if (rise > MaxRise) return false;
+            // On stairs the capsule travels above the higher step's edge; the treads face up and are skipped below.
+            float climb = rise > 0.05f ? rise : 0f;
             var b = body.bounds;
             float skin = Physics.defaultContactOffset;
             float radius = Mathf.Max(skin, Mathf.Min(b.extents.x, b.extents.z) - skin) * 0.9f;
-            Vector3 center = origin + (b.center - chef.transform.position) + Vector3.up * Lift;
+            Vector3 center = origin + (b.center - chef.transform.position) + Vector3.up * (Lift + climb);
             float height = Mathf.Max(0f, b.extents.y - skin - radius - Lift);
             int n = Physics.CapsuleCastNonAlloc(center + Vector3.up * height, center - Vector3.up * height, radius, diff.normalized, Hits, diff.magnitude, ~0, QueryTriggerInteraction.Ignore);
             bool clear = true;

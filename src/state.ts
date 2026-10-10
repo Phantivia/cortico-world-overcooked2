@@ -20,6 +20,8 @@ export interface Item {
   cookTime?: number;
   /** 盘、锅、篮里的食材，每项是内部名，附加工态后缀如 `Rice:done`、`Fish:chopped`。 */
   contents?: string[];
+  /** 面包、玉米饼、面团这类上面能再放食材的底料（游戏里的 PreparationContainer），contents 是放在上面的。 */
+  base?: boolean;
   dirty?: boolean;
   /** 叠起来的盘子数。 */
   stack?: number;

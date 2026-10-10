@@ -46,6 +46,13 @@ namespace CorticoOvercooked2
         /// </summary>
         public GridManager Grid { get; private set; }
         private readonly List<GridManager> _others = new List<GridManager>();
+
+        /// <summary>
+        /// Parts of the kitchen move during a round: a moving part's grid or stations that re-occupy
+        /// cells as they move (DynamicGridLocation: Mine 2-6's junction turns its counters every 20 s,
+        /// Balloon 1-5's counters slide).
+        /// </summary>
+        public bool Moving { get; private set; }
         public ServerKitchenFlowControllerBase Flow { get; private set; }
         public List<StationInfo> Stations => _stations;
 
@@ -100,6 +107,8 @@ namespace CorticoOvercooked2
                 var g = GridManager.GetActive(i);
                 if (g != null && g != Grid) _others.Add(g);
             }
+            // Wizard 3-1's first floor has its own grid but stays put; a grid under an Animator moves with it.
+            Moving = _others.Any(g => g.GetComponentInParent<Animator>() != null) || UnityEngine.Object.FindObjectOfType<DynamicGridLocation>() != null;
             var drying = new HashSet<GameObject>();
             foreach (var sink in UnityEngine.Object.FindObjectsOfType<WashingStation>())
                 if (sink.m_dryingStation != null) drying.Add(sink.m_dryingStation.gameObject);
@@ -283,6 +292,8 @@ namespace CorticoOvercooked2
                 if (node != null) name = node.name;
                 if (work != null) o.Num("chop", work.HasFinished() ? 1 : work.GetProgress());
             }
+            // Bun, tortilla, dough: an ingredient other ingredients are put on (PreparationContainer).
+            if (kind == "other" && go.GetComponent<ServerPreparationContainer>() != null) { kind = "ingredient"; o.Bool("base", true); }
             o.Str("kind", kind).Str("name", name);
             var cooking = go.GetComponent<ServerCookingHandler>();
             if (cooking != null)
@@ -633,7 +644,13 @@ namespace CorticoOvercooked2
         /// planes and water are triggers and so are never floor. Levels use their own layers for
         /// floors, so no layer is assumed.
         /// </summary>
-        public static bool IsFloor(Vector3 center)
+        public static bool IsFloor(Vector3 center) => FloorHeight(center) != null;
+
+        /// <summary>
+        /// Height of that floor, or null when there is none. Wizard 3-1 has a first floor 1.2 m up
+        /// beside the ground floor with stairs between, so cells on one grid stand at different heights.
+        /// </summary>
+        public static float? FloorHeight(Vector3 center)
         {
             var hits = Physics.RaycastAll(center + Vector3.up * 3f, Vector3.down, 8f, ~0, QueryTriggerInteraction.Ignore);
             Array.Sort(hits, (a, b) => a.distance.CompareTo(b.distance));
@@ -643,9 +660,9 @@ namespace CorticoOvercooked2
                 if (go.GetComponentInParent<PlayerControls>() != null || go.GetComponentInParent<ServerPhysicalAttachment>() != null) continue;
                 if (h.collider.attachedRigidbody != null && !h.collider.attachedRigidbody.isKinematic) continue;
                 if (PlayersLayer >= 0 && Physics.GetIgnoreLayerCollision(PlayersLayer, go.layer)) continue;
-                return h.normal.y > 0.7f;
+                return h.normal.y > 0.7f ? h.point.y : (float?)null;
             }
-            return false;
+            return null;
         }
 
         /// <summary>Every hit straight down through a cell, for diagnosing floor detection.</summary>
@@ -663,7 +680,7 @@ namespace CorticoOvercooked2
             var chef = BotChef() ?? Chefs().FirstOrDefault();
             if (chef != null)
             {
-                var blocker = Nav.BodyBlocker(chef, new Vector3(center.x, chef.transform.position.y, center.z));
+                var blocker = Nav.BodyBlocker(chef, Nav.StandAt(this, chef, x, z));
                 o.Bool("walkable", Nav.Walkable(this, chef, x, z)).Str("bodyBlocker", blocker != null ? blocker.gameObject.name + "/" + LayerMask.LayerToName(blocker.gameObject.layer) : null);
             }
             return o.ToString();
