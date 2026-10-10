@@ -183,8 +183,10 @@ export class Overcooked2World implements World {
           'wait 等 target 到 until（cooked 煮好、chopped 切好、item 上面有东西、empty 空出来、plates 有盘子），或者 until=seconds 等 seconds 秒；' +
           'use 操作开关；extinguish 拿着灭火器灭目标的火。dash=true 路上冲刺。' +
           'target 写场景描述里的标签；不写 target 写 find（可加 near、shared），执行到这一步时再从我够得着的里面挑。' +
-          'queue：replace（不写就是它）撤掉还没开始的任务，正在做的做完；append 排到最后；now 叫停正在做的，先做这个。cancel 写任务号，顺带撤掉那几个。',
+          'queue：replace（不写就是它）撤掉还没开始的任务，正在做的做完；append 排到最后；now 叫停正在做的，先做这个。cancel 写任务号，顺带撤掉那几个。' +
+          (this.cfg.endTurnOnDo ? '调用后这一轮就结束：要说的话、要盯的事写在同一条回复里；回执和任务结果随下一批消息一起读到。' : ''),
         tags: ['act'],
+        endsTurn: this.cfg.endTurnOnDo,
         parameters: {
           type: 'object',
           additionalProperties: false,
@@ -256,7 +258,12 @@ export class Overcooked2World implements World {
     if (typeof queue !== 'string') problems.push(queue.problem);
     const cancel = args.cancel ?? [];
     if (!Array.isArray(cancel) || cancel.some(n => !Number.isInteger(n))) problems.push('cancel 要写任务号数组');
-    if (problems.length || typeof queue !== 'string') return { text: `没有排入：${problems.join('；')}`, failed: true };
+    if (problems.length || typeof queue !== 'string') {
+      const text = `没有排入：${problems.join('；')}`;
+      // 这一轮随 oc2_do 结束了，回执要等下一批消息才读到；没排上的任务不会再有结果事件，单独叫醒一次。
+      if (this.cfg.endTurnOnDo) void this.push('task', `[执行器] 刚才的 oc2_do ${text}`, 'flush');
+      return { text, failed: true };
+    }
     const { id, notes } = await this.executor.submit(steps, queue, cancel as number[]);
     this.idleSince = 0;
     this.nudgedAt = 0;

@@ -16,6 +16,8 @@ export interface Overcooked2ConfigSection {
   anchorSec: number;
   /** 截图宽度（像素）。 */
   lookWidth: number;
+  /** oc2_do 执行完就结束这一轮，不再为调 end_turn 多请求一次模型；回执留在上下文里，下一批消息到了一起读。 */
+  endTurnOnDo: boolean;
 }
 
 export const OVERCOOKED2_DEFAULTS: Overcooked2ConfigSection = {
@@ -27,6 +29,7 @@ export const OVERCOOKED2_DEFAULTS: Overcooked2ConfigSection = {
   orderWarnSec: 20,
   anchorSec: 120,
   lookWidth: 768,
+  endTurnOnDo: true,
 };
 
 export const OVERCOOKED2_CONFIG_GROUP: ConfigGroup = {
@@ -43,6 +46,7 @@ export const OVERCOOKED2_CONFIG_GROUP: ConfigGroup = {
       'worlds.overcooked2.orderWarnSec': { type: 'integer', minimum: 0, maximum: 120, title: '订单临期提醒（秒）', 'x-hot': true },
       'worlds.overcooked2.anchorSec': { type: 'integer', minimum: 30, maximum: 1800, title: '完整场景描述间隔（秒）', 'x-hot': true },
       'worlds.overcooked2.lookWidth': { type: 'integer', minimum: 320, maximum: 1920, title: '截图宽度', 'x-hot': true },
+      'worlds.overcooked2.endTurnOnDo': { type: 'boolean', title: '派完任务就结束这一轮' },
     },
   },
 };
