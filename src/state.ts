@@ -147,4 +147,10 @@ export interface GameEvent {
   level?: string;
   timeLeft?: number;
   left?: number;
+  /** board：开场黑板的贴图名、本地化后的标题和说明、黑板上的小标签（「新食谱」这类），以及截图（base64 PNG，黑板已经关掉时没有）。 */
+  sprite?: string;
+  title?: string;
+  body?: string;
+  label?: string;
+  png?: string;
 }

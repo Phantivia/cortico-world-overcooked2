@@ -12,6 +12,7 @@
 import { fileURLToPath } from 'node:url';
 import type { BlobInput, ToolDef, ToolOutcome, TriggerMode, World, WorldConsoleDecl, WorldHost } from 'cortico/core/types.ts';
 import { nowIso } from 'cortico/core/util.ts';
+import { BOARD_STEPS } from './boards.ts';
 import { GameBridge, type Reply } from './bridge.ts';
 import { OVERCOOKED2_CONFIG_GROUP, type Overcooked2ConfigSection } from './config.ts';
 import { Executor, type QueueMode, type TaskReport } from './executor.ts';
@@ -564,6 +565,10 @@ export class Overcooked2World implements World {
       this.arm();
       return;
     }
+    if (e.k === 'board') {
+      this.onBoard(e);
+      return;
+    }
     const t = translate(e, this.state, this.ctx(), this.tips);
     if (t.trail) pushTrail(this.trail, t.trail);
     if (t.event) {
@@ -577,11 +582,24 @@ export class Overcooked2World implements World {
     this.arm();
   }
 
-  private async push(kind: string, text: string, trigger: TriggerMode): Promise<void> {
+  /** 关卡开场黑板：游戏里的标题和说明、看图写的做法，带上插件截的黑板图。 */
+  private onBoard(e: GameEvent): void {
+    // 说明里可能夹着按键图标的富文本标签（<quad …/>），去掉。
+    const plain = (s: string | undefined) => (s ?? '').replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
+    const head = [plain(e.label), plain(e.title)].filter(Boolean).join('：');
+    const steps = e.sprite ? BOARD_STEPS[e.sprite] : undefined;
+    const lines = [`开场黑板${head ? `「${head}」` : ''}：${plain(e.body) || '（没有说明文字）'}`];
+    if (steps) lines.push(`图上画的：${steps}`);
+    const blobs: BlobInput[] = e.png ? [{ bytes: Buffer.from(e.png, 'base64'), mime: 'image/png', name: 'overcooked2-board.png', fallbackText: '（开场黑板截图）' }] : [];
+    if (!e.png) lines.push('（黑板已经关掉了，没截到图）');
+    void this.push('board', lines.join('\n'), 'flush', blobs);
+  }
+
+  private async push(kind: string, text: string, trigger: TriggerMode, blobs?: BlobInput[]): Promise<void> {
     const host = this.host;
     if (!host) return;
     try {
-      await host.pushEvent({ type: `overcooked2.${kind}`, ts: nowIso(this.opts.timezone), source: this.id, senderKey: this.id, text: `${TAG} ${text}` }, { trigger });
+      await host.pushEvent({ type: `overcooked2.${kind}`, ts: nowIso(this.opts.timezone), source: this.id, senderKey: this.id, text: `${TAG} ${text}`, ...(blobs?.length ? { blobs } : {}) }, { trigger });
     } catch (err) {
       host.log.warn(`overcooked2 event: ${String(err)}`);
     }

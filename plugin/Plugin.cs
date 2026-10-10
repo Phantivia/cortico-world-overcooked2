@@ -90,6 +90,8 @@ namespace CorticoOvercooked2
             {
                 _nextIdentity = Time.realtimeSinceStartup + 0.5f;
                 Identity.Apply();
+                var board = Board.NewlyShown();
+                if (board != null) StartCoroutine(ReportBoard(board));
             }
             Lifecycle();
             foreach (var ev in Hooks.Drain())
@@ -225,9 +227,34 @@ namespace CorticoOvercooked2
             Reply(to, id, true, null);
         }
 
+        /// <summary>
+        /// The board pops in with an animation while the game is paused; the screenshot waits on
+        /// real time for it to settle. Skipping takes holding a button for a second, so the board
+        /// is still up then unless it was already gone.
+        /// </summary>
+        private IEnumerator ReportBoard(GameObject popup)
+        {
+            var ev = Board.Describe();
+            for (float until = Time.realtimeSinceStartup + 0.8f; Time.realtimeSinceStartup < until;) yield return null;
+            if (popup != null && popup.activeInHierarchy)
+            {
+                yield return new WaitForEndOfFrame();
+                try { ev.Str("png", Convert.ToBase64String(Screenshot(960))); }
+                catch (Exception err) { Log.LogError("[overcooked2] board screenshot: " + err); }
+            }
+            Hooks.Emit(ev);
+        }
+
         private IEnumerator Capture(Bridge.Client to, long id, int width)
         {
             yield return new WaitForEndOfFrame();
+            try { Reply(to, id, true, null, "\"png\":" + Json.Quote(Convert.ToBase64String(Screenshot(width)))); }
+            catch (Exception err) { Reply(to, id, false, "截图失败：" + err.Message); }
+        }
+
+        /// <summary>The frame just rendered as PNG, scaled down to width when narrower; call after WaitForEndOfFrame.</summary>
+        private static byte[] Screenshot(int width)
+        {
             Texture2D full = null, scaled = null;
             try
             {
@@ -250,9 +277,8 @@ namespace CorticoOvercooked2
                     png = scaled.EncodeToPNG();
                 }
                 else png = full.EncodeToPNG();
-                Reply(to, id, true, null, "\"png\":" + Json.Quote(Convert.ToBase64String(png)));
+                return png;
             }
-            catch (Exception err) { Reply(to, id, false, "截图失败：" + err.Message); }
             finally
             {
                 if (full != null) Destroy(full);

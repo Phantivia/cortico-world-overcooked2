@@ -28,6 +28,7 @@ Owner: `plugin/Plugin.cs`, `src/bridge.ts`, `src/state.ts`.
 | `deliver` | ok, order?, dish?, chef? | 上菜成功或被拒 |
 | `fell` / `lost` | chef / item | 厨师掉出场外 / 物品掉出场外 |
 | `level` / `level.exit` | level | 进入关卡 / 离开厨房 |
+| `board` | sprite?, title?, body?, label?, png? | 战役关开场黑板（LevelIntroFlowroutine 的 TutorialPopup）弹出约 0.8 秒后：步骤图的贴图名，本地化后的标题、说明和标签，屏幕截图（960 宽 PNG 的 base64；黑板已经关掉时没有） |
 | `round.start` / `round.end` | timeLeft / phase | 回合开始 / 结束 |
 
 ## 客户端 → 插件
