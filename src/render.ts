@@ -240,7 +240,10 @@ export function segments(state: GameState, ctx: RenderCtx, input: SnapshotInput)
     segs.push({ key: `st:${st.id}`, text: boring ? '' : text, cmp: boring ? '' : text, cleared: `${stationName(st, ctx)}：空了` });
   }
   for (const item of state.loose) {
-    segs.push({ key: `loose:${item.id}`, text: `地上 (${item.cell?.[0]},${item.cell?.[1]})：${itemText(item, ctx)}${item.flying ? '（飞行中）' : ''}`, cmp: `${item.cell}|${itemText(item, ctx)}` });
+    // 食材的称呼不带标签（台面上的靠站点标签拿）；地上的只能按物品标签拿，补上。
+    const label = item.kind === 'ingredient' ? ctx.labels.of(item.id) : undefined;
+    const what = `${label ? `${label} ` : ''}${itemText(item, ctx)}`;
+    segs.push({ key: `loose:${item.id}`, text: `地上 (${item.cell?.[0]},${item.cell?.[1]})：${what}${item.flying ? '（飞行中）' : ''}`, cmp: `${item.cell}|${what}` });
   }
   segs.push({ key: 'queue', text: `[队列] ${input.queue}`, cmp: input.queue });
   return segs;

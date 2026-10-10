@@ -255,7 +255,7 @@ function takenThing(step: ParsedStep, state: GameState | null, ctx: RenderCtx): 
   if (st?.item) return { what: itemText(st.item, ctx), kind: st.item.kind };
   if (st?.kind === 'crate') return { what: st.gives ? ingredientName(st.gives) : '食材', kind: 'ingredient' };
   if (st && (st.kind === 'drying' || st.kind === 'return')) return { what: '盘子', kind: 'plate' };
-  const on = state?.stations.find(s => s.item?.id === step.id)?.item;
+  const on = state?.stations.find(s => s.item?.id === step.id)?.item ?? state?.loose.find(i => i.id === step.id);
   if (on) return { what: itemText(on, ctx), kind: on.kind };
   return { what: nameOf(step.id, state, ctx) };
 }
