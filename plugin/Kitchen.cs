@@ -38,7 +38,14 @@ namespace CorticoOvercooked2
         private string _layoutJson;
         private float _nextLayout;
 
+        /// <summary>
+        /// The level's own grid (the one with the GridNavSpace), which every cell in the protocol is
+        /// on. Some kitchens carry part of themselves on a moving thing with its own grid (Balloon
+        /// 1-5's basket holds the crates, pass and sink); <see cref="_others"/> are those, looked up
+        /// by world position.
+        /// </summary>
         public GridManager Grid { get; private set; }
+        private readonly List<GridManager> _others = new List<GridManager>();
         public ServerKitchenFlowControllerBase Flow { get; private set; }
         public List<StationInfo> Stations => _stations;
 
@@ -81,10 +88,18 @@ namespace CorticoOvercooked2
         private void Rescan()
         {
             _stations.Clear();
+            _others.Clear();
             Grid = null;
             if (Flow == null) return;
-            var any = PlayerIDProvider.s_AllProviders.Count > 0 ? PlayerIDProvider.s_AllProviders._items[0] : null;
-            Grid = GameUtils.GetGridManager(any != null ? any.transform : Flow.transform);
+            // Not the grid above a chef: a chef standing on a moving part is parented under its grid,
+            // and cells measured on that one move with it.
+            var nav = UnityEngine.Object.FindObjectOfType<GridNavSpace>();
+            Grid = (nav != null ? nav.GetComponent<GridManager>() : null) ?? GameUtils.GetGridManager(Flow.transform);
+            for (int i = 0; i < GridManager.GetActiveCount(); i++)
+            {
+                var g = GridManager.GetActive(i);
+                if (g != null && g != Grid) _others.Add(g);
+            }
             var drying = new HashSet<GameObject>();
             foreach (var sink in UnityEngine.Object.FindObjectsOfType<WashingStation>())
                 if (sink.m_dryingStation != null) drying.Add(sink.m_dryingStation.gameObject);
@@ -171,11 +186,37 @@ namespace CorticoOvercooked2
         public bool InReach(int x, int z)
         {
             var h = Grid.GetGridHalfSize();
-            return x >= -h.X - GridMargin && x <= h.X + GridMargin && z >= -h.Z - GridMargin && z <= h.Z + GridMargin;
+            if (x >= -h.X - GridMargin && x <= h.X + GridMargin && z >= -h.Z - GridMargin && z <= h.Z + GridMargin) return true;
+            return OtherGridAt(x, z, out _, out _);
         }
 
-        /// <summary>The grid's occupant of a cell; cells outside the grid have none.</summary>
-        public GameObject Occupant(int x, int z) => InGrid(x, z) ? Grid.GetGridOccupant(new GridIndex(x, 0, z)) : null;
+        /// <summary>The cell's occupant on the level grid, or else on a moving part's grid over that spot.</summary>
+        public GameObject Occupant(int x, int z)
+        {
+            var own = InGrid(x, z) ? Grid.GetGridOccupant(new GridIndex(x, 0, z)) : null;
+            if (own != null || _others.Count == 0) return own;
+            return OtherGridAt(x, z, out var g, out var index) ? g.GetGridOccupant(index) : null;
+        }
+
+        /// <summary>A moving part's grid whose bounds hold this level-grid cell's centre right now, and the cell on it.</summary>
+        private bool OtherGridAt(int x, int z, out GridManager grid, out GridIndex index)
+        {
+            grid = null;
+            index = default(GridIndex);
+            if (_others.Count == 0) return false;
+            var center = Grid.GetPosFromGridLocation(new GridIndex(x, 0, z));
+            foreach (var g in _others)
+            {
+                if (g == null || !g.isActiveAndEnabled) continue;
+                var at = g.GetUnclampedGridLocationFromPos(center);
+                var h = g.GetGridHalfSize();
+                if (Math.Abs(at.X) > h.X || Math.Abs(at.Z) > h.Z) continue;
+                grid = g;
+                index = new GridIndex(at.X, 0, at.Z);
+                return true;
+            }
+            return false;
+        }
 
         // ---- chefs ---------------------------------------------------------------------
 
