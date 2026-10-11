@@ -1,5 +1,7 @@
 # cortico-world-overcooked2
 
+> 此乃直播测试验证之后的world，和其他 Persona / 非直播场景的兼容性有待测试。
+
 Owner: `src/definition.ts`, `plugin/`.
 
 Cortico World for *Overcooked! 2* local co-op. The bot joins as the second local player through a virtual gamepad and plays its own chef next to the operator. A BepInEx 5 plugin inside the game hooks the game's own methods with Harmony and serves state and events over `127.0.0.1` TCP ([docs/protocol.md](docs/protocol.md)).

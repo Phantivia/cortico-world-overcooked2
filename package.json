@@ -2,8 +2,13 @@
   "name": "cortico-world-overcooked2",
   "version": "0.1.0",
   "type": "module",
-  "description": "Cortico World for Overcooked! 2 local co-op: the bot joins as a second local player through a BepInEx plugin and plays next to the operator",
+  "description": "Cortico World for Overcooked! 2 local co-op: the bot joins as a second local player through a BepInEx plugin and plays next to the operator. 此乃直播测试验证之后的world，和其他 Persona / 非直播场景的兼容性有待测试。",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Phantivia/cortico-world-overcooked2.git"
+  },
+  "homepage": "https://github.com/Phantivia/cortico-world-overcooked2#readme",
   "keywords": [
     "cortico-world",
     "cortico"
@@ -22,7 +27,8 @@
     "plugin/*.cs",
     "plugin/*.csproj",
     "docs",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "scripts": {
     "test": "vitest run",
