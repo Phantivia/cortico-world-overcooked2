@@ -284,18 +284,18 @@ function aimsAtIngredient(step: ParsedStep, state: GameState | null): boolean {
 }
 
 /**
- * 按游戏规则推演一串步骤里手上的东西，找出一定会卡住的第一步：拿、切、洗时手里还有东西（游戏里手上
+ * 按游戏规则推演一串步骤里手上的东西，找出一定会卡住的第一步（index 从 0 起）：拿、切、洗时手里还有东西（游戏里手上
  * 有东西时按键只会是放），或者放、上菜、扔时手里是空的。start 是开始时手里的东西（null 空着，
  * undefined 不知道，比如排在别的任务后面）。只认推得准的：拿起之后是拿着；拿着盘子对炉灶、盘子、锅
  * 放之后还拿着；拿着盘子对放着食材的站点放、拿着食材放、上菜、扔之后是空的；其余的放推不准，之后不再判。
  */
-export function handsProblem(steps: ParsedStep[], start: Item | null | undefined, state: GameState | null, ctx: RenderCtx): string | null {
+export function handsProblem(steps: ParsedStep[], start: Item | null | undefined, state: GameState | null, ctx: RenderCtx): { index: number; why: string } | null {
   let hand: Hand = start === undefined ? { s: 'unknown' } : start === null ? { s: 'empty' } : { s: 'held', what: `${itemText(start, ctx)}（排的这一刻就在手里）`, kind: start.kind };
   for (const [i, step] of steps.entries()) {
     const n = `第 ${i + 1} 步「${describe(step, state, ctx)}」`;
-    if (step.do === 'take' && hand.s === 'held') return `${n}时手里还拿着${hand.what}。手里有东西时按键只会是放：要把台面或砧板上的食材装进手里的盘子，就对那里 put（盘子会落在那里）；不然先 put 放下再拿`;
-    if ((step.do === 'chop' || step.do === 'wash') && hand.s === 'held') return `${n}时手里还拿着${hand.what}，切、洗都要空手，先 put 放下`;
-    if ((step.do === 'put' || step.do === 'serve' || step.do === 'throw') && hand.s === 'empty') return `${n}时手里是空的，先 take 拿起要放的东西`;
+    if (step.do === 'take' && hand.s === 'held') return { index: i, why: `${n}时手里还拿着${hand.what}。手里有东西时按键只会是放：要把台面或砧板上的食材装进手里的盘子，就对那里 put（盘子会落在那里）；不然先 put 放下再拿` };
+    if ((step.do === 'chop' || step.do === 'wash') && hand.s === 'held') return { index: i, why: `${n}时手里还拿着${hand.what}，切、洗都要空手，先 put 放下` };
+    if ((step.do === 'put' || step.do === 'serve' || step.do === 'throw') && hand.s === 'empty') return { index: i, why: `${n}时手里是空的，先 take 拿起要放的东西` };
     switch (step.do) {
       case 'take': {
         const got = takenThing(step, state, ctx);

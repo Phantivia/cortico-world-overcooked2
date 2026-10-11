@@ -25,8 +25,9 @@ describe('hands', () => {
 
   // 1010 双人局里卡住最多的写法：盛完饭盘子还在手上，接着去拿食材箱。
   it('stops a take that comes while the plate is still in hand after scooping from a stove', () => {
-    const why = check([{ do: 'take', find: 'clean_plate' }, { do: 'put', target: of('stove') }, { do: 'take', target: of('crate') }]);
-    expect(why).toMatch(/^第 3 步「拿 K\d .*」时手里还拿着第 2 步「放到 S\d 炉灶」之后还在手上的盘子/);
+    const cut = check([{ do: 'take', find: 'clean_plate' }, { do: 'put', target: of('stove') }, { do: 'take', target: of('crate') }]);
+    expect(cut?.index).toBe(2);
+    expect(cut?.why).toMatch(/^第 3 步「拿 K\d .*」时手里还拿着第 2 步「放到 S\d 炉灶」之后还在手上的盘子/);
   });
 
   it('lets the plan through once the plate is put down, on an empty counter or under a loose ingredient', () => {

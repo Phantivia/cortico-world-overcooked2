@@ -80,6 +80,17 @@ async function setup() {
 const tool = (world: Overcooked2World, name: string) => world.tools().find(t => t.name === name)!;
 
 describe('Overcooked2World', () => {
+  // 操作员 1010 定:一定会卡的那步之前照常排,只丢后面的,回执里说明。
+  it('queues the steps before one that must fail on what the hands hold, and says where it stopped', async () => {
+    const { plugin, host, world, state, labels } = await setup();
+    const crates = state.stations.filter(s => s.kind === 'crate');
+    plugin.onRequest = r => (r.op === 'act' ? { ok: true, item: { id: 77, kind: 'ingredient', name: 'Cucumber', chop: 0 } } : { ok: true });
+    const receipt = await tool(world, 'oc2_do').handler({ steps: [{ do: 'take', target: labels.of(crates[0].id) }, { do: 'take', target: labels.of(crates[1].id) }] }, { role: 'main', log: host.log });
+    expect(typeof receipt === 'string' ? receipt : receipt.text).toMatch(/^\[执行器\] 任务#1 收下了：拿 K\d [^→]*。\n只排了前 1 步，第 2 步起没排：第 2 步「拿 K\d [^」]*」时手里还拿着第 1 步拿起的/);
+    await until(() => host.events.some(e => e.type === 'overcooked2.task'));
+    expect(plugin.requests.filter(r => r.op === 'act').map(r => r.step)).toEqual([{ do: 'take', target: crates[0].id }]);
+  });
+
   it('sends labelled steps to the plugin as object ids and reports the finished task with a wake', async () => {
     const { plugin, host, world, state, labels } = await setup();
     const crate = state.stations.find(s => s.kind === 'crate' && s.gives === 'Cucumber')!;

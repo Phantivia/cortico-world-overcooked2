@@ -263,12 +263,14 @@ export class Overcooked2World implements World {
     if (typeof queue !== 'string') problems.push(queue.problem);
     const cancel = args.cancel ?? [];
     if (!Array.isArray(cancel) || cancel.some(n => !Number.isInteger(n))) problems.push('cancel 要写任务号数组');
+    let cut: { index: number; why: string } | null = null;
     if (!problems.length && typeof queue === 'string') {
       // 排在正在做的任务后面时，开始那一刻手里是什么要等它做完才知道。
       const startsNow = queue === 'now' || this.executor.idle;
       const me = this.state ? chefOf(this.state, 'bot') : undefined;
-      const hands = handsProblem(steps, startsNow && me ? me.held ?? null : undefined, this.state, this.ctx());
-      if (hands) problems.push(hands);
+      cut = handsProblem(steps, startsNow && me ? me.held ?? null : undefined, this.state, this.ctx());
+      // 一定卡住的那步之前照常排；第一步就卡住时没有可排的。
+      if (cut?.index === 0) problems.push(cut.why);
     }
     if (problems.length || typeof queue !== 'string') {
       const text = `没有排入：${problems.join('；')}`;
@@ -276,11 +278,13 @@ export class Overcooked2World implements World {
       if (this.cfg.endTurnOnDo) void this.push('task', `[执行器] 刚才的 oc2_do ${text}`, 'flush');
       return { text, failed: true };
     }
-    const { id, notes } = await this.executor.submit(steps, queue, cancel as number[]);
+    const kept = cut ? steps.slice(0, cut.index) : steps;
+    const { id, notes } = await this.executor.submit(kept, queue, cancel as number[]);
     this.idleSince = 0;
     this.nudgedAt = 0;
-    const chain = steps.map(st => describe(st, this.state, this.ctx())).join(' → ');
-    return { text: `[执行器] 任务#${id} 收下了：${chain}。${notes.length ? `${notes.join('；')}。` : ''}\n${this.nowFacts(steps)}\n[队列] ${this.executor.describeQueue()}` };
+    const chain = kept.map(st => describe(st, this.state, this.ctx())).join(' → ');
+    const dropped = cut ? `\n只排了前 ${cut.index} 步，第 ${cut.index + 1} 步起没排：${cut.why}。` : '';
+    return { text: `[执行器] 任务#${id} 收下了：${chain}。${notes.length ? `${notes.join('；')}。` : ''}${dropped}\n${this.nowFacts(kept)}\n[队列] ${this.executor.describeQueue()}` };
   }
 
   private async armTool(args: Record<string, unknown>): Promise<ToolOutcome> {
@@ -293,8 +297,9 @@ export class Overcooked2World implements World {
     if (typeof when === 'string') problems.push(when);
     const { steps, problems: stepProblems } = parseSteps(args.steps, s, ctx);
     problems.push(...stepProblems);
-    const hands = stepProblems.length ? null : handsProblem(steps, undefined, s, ctx);
-    if (hands) problems.push(hands);
+    const cut = stepProblems.length ? null : handsProblem(steps, undefined, s, ctx);
+    if (cut?.index === 0) problems.push(cut.why);
+    const kept = cut ? steps.slice(0, cut.index) : steps;
     const queue = parseQueue(args.queue, 'now');
     if (typeof queue !== 'string') problems.push(queue.problem);
     const max = args.maxFirings ?? 1;
@@ -302,11 +307,12 @@ export class Overcooked2World implements World {
     const sec = args.expiresInSec;
     if (sec !== undefined && (!Number.isInteger(sec) || (sec as number) < 1 || (sec as number) > 600)) problems.push('expiresInSec 要是 1 到 600 的整数');
     if (problems.length || typeof when === 'string' || typeof queue !== 'string') return { text: `没有盯上：${problems.join('；')}`, failed: true };
-    const w = this.watches.arm(when, steps, queue, max as number, sec === undefined ? null : (sec as number) * 1000);
+    const w = this.watches.arm(when, kept, queue, max as number, sec === undefined ? null : (sec as number) * 1000);
     const until = sec === undefined ? '盯到这一关结束' : `盯 ${sec} 秒`;
     const times = (max as number) > 1 ? `最多排 ${max} 次` : '排一次就撤';
     const already = evaluate(when, s) ? '条件现在就成立，马上排上。' : '';
-    return { text: `盯着#${w.id} 盯上了：${this.watchText(w)}。${times}，${until}。${already}\n${this.watchesLine()}` };
+    const dropped = cut ? `只盯了前 ${cut.index} 步，第 ${cut.index + 1} 步起没要：${cut.why}。` : '';
+    return { text: `盯着#${w.id} 盯上了：${this.watchText(w)}。${times}，${until}。${already}${dropped}\n${this.watchesLine()}` };
   }
 
   private async stopTool(args: Record<string, unknown>): Promise<ToolOutcome> {
