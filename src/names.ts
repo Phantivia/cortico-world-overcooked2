@@ -121,6 +121,9 @@ const STATION_KIND: Record<string, string> = {
   oven: '烤箱',
   dispenser: '取盘处',
   fixture: '固定台面',
+  switch: '开关',
+  portal: '传送门',
+  terminal: '控制台',
   other: '设施',
 };
 

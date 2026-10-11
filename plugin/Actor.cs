@@ -334,21 +334,37 @@ namespace CorticoOvercooked2
                 for (int i = 0; i < route.Count && !replan; i++)
                 {
                     var cell = route[i];
-                    var center = _k.CellCenter(cell.X, cell.Z);
+                    // Into a portal: walk at the entry portal and count the step done once the chef is in the exit's cell.
+                    bool hop = _k.IsHop(i == 0 ? start : route[i - 1], cell, out var portal);
+                    var center = hop ? _k.CellCenter(portal.X, portal.Z) : _k.CellCenter(cell.X, cell.Z);
                     bool last = i == route.Count - 1;
+                    if (hop) { best = float.MaxValue; lastProgressAt = Time.realtimeSinceStartup; }
                     while (true)
                     {
                         yield return Ready(o);
                         if (o.Why != null) yield break;
                         chef = ChefNow();
                         if (Time.realtimeSinceStartup > deadline) { Fail(o, "走了太久还没到"); yield break; }
+                        if (hop)
+                        {
+                            var now = ChefCell(chef);
+                            if (now.X == cell.X && now.Z == cell.Z) break;
+                            var teleportable = chef.GetComponent<ServerTeleportablePlayer>();
+                            if (teleportable != null && teleportable.IsTeleporting())
+                            {
+                                Pad.Stop();
+                                lastProgressAt = Time.realtimeSinceStartup;
+                                yield return null;
+                                continue;
+                            }
+                        }
                         var offset = (center - chef.transform.position).XZ();
                         float dist = offset.magnitude;
-                        if (dist < CellSize * (last ? 0.18f : 0.35f)) break;
+                        if (!hop && dist < CellSize * (last ? 0.18f : 0.35f)) break;
                         if (dist < best - 0.02f) { best = dist; lastProgressAt = Time.realtimeSinceStartup; }
                         if (Time.realtimeSinceStartup - lastProgressAt > 0.8f) { replan = true; replans++; break; }
-                        Steer(chef, center, last ? Mathf.Clamp(dist / CellSize * 1.5f, 0.45f, 1f) : 1f);
-                        if (dash && Time.realtimeSinceStartup >= nextDash && route.Count - i >= 4 && Straight(route, i) && Vector3.Dot(chef.transform.forward.XZ().normalized, offset.normalized) > 0.95f)
+                        Steer(chef, center, last && !hop ? Mathf.Clamp(dist / CellSize * 1.5f, 0.45f, 1f) : 1f);
+                        if (dash && !hop && Time.realtimeSinceStartup >= nextDash && route.Count - i >= 4 && Straight(route, i) && Vector3.Dot(chef.transform.forward.XZ().normalized, offset.normalized) > 0.95f)
                         {
                             nextDash = Time.realtimeSinceStartup + 1.2f;
                             Pad.Press(PlayerInputLookup.LogicalButtonID.Dash, true);
@@ -659,6 +675,8 @@ namespace CorticoOvercooked2
         private IEnumerator Use(Dictionary<string, object> step, Outcome o, bool dash)
         {
             if (!Resolve(step, o, out var t)) yield break;
+            // Space 6-5: using a terminal starts piloting it with the stick for as long as the session lasts.
+            if (t.Station != null && t.Station.Kind == "terminal") { Fail(o, "控制台要一直用摇杆驾驶，我开不了，要交给队友"); yield break; }
             yield return Approach(o, t, dash, Aim.Interact);
             if (o.Why != null) yield break;
             var interactable = ChefNow().CurrentInteractionObjects.m_interactable;

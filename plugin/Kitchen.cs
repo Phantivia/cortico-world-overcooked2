@@ -120,6 +120,12 @@ namespace CorticoOvercooked2
             }
             foreach (var sink in UnityEngine.Object.FindObjectsOfType<ServerWashingStation>())
                 if (_stations.All(s => s.Go != sink.gameObject)) _stations.Add(new StationInfo { Go = sink.gameObject, Kind = "sink" });
+            // Portals (Wizard 3-3/3-4/5-5, dynamic stages 03/04) and piloting terminals (Space 6-5)
+            // occupy a grid cell and are not attach stations.
+            foreach (var portal in UnityEngine.Object.FindObjectsOfType<Teleportal>())
+                if (_stations.All(s => s.Go != portal.gameObject)) _stations.Add(new StationInfo { Go = portal.gameObject, Kind = "portal" });
+            foreach (var terminal in UnityEngine.Object.FindObjectsOfType<Terminal>())
+                if (_stations.All(s => s.Go != terminal.gameObject)) _stations.Add(new StationInfo { Go = terminal.gameObject, Kind = "terminal" });
             // Corner pieces and other fixed counters that hold nothing but can burn: listed so a fire on
             // them has a name and a target.
             foreach (var flammable in UnityEngine.Object.FindObjectsOfType<ServerFlammable>())
@@ -138,6 +144,8 @@ namespace CorticoOvercooked2
             if (go.GetComponent<RubbishBin>() != null) return "bin";
             if (go.GetComponent<PlateReturnStation>() != null) return drying.Contains(go) ? "drying" : "return";
             if (go.GetComponent<PickupItemSpawner>() != null) return "crate";
+            // Sushi 4-5/5-1: an attach station players cannot put things on, used with the interact button.
+            if (go.GetComponent<SwitchStation>() != null) return "switch";
             if (go.GetComponent<Workstation>() != null) return "board";
             var cooker = go.GetComponent<ServerCookingStation>();
             if (cooker != null)
@@ -197,6 +205,54 @@ namespace CorticoOvercooked2
             var h = Grid.GetGridHalfSize();
             if (x >= -h.X - GridMargin && x <= h.X + GridMargin && z >= -h.Z - GridMargin && z <= h.Z + GridMargin) return true;
             return OtherGridAt(x, z, out _, out _);
+        }
+
+        /// <summary>A walk through a portal: from its entry cell into Portal, coming out in Exit (the exit portal's cell).</summary>
+        public struct Hop
+        {
+            public Nav.Cell Portal, Exit;
+        }
+
+        /// <summary>
+        /// Portals a chef standing in this cell can walk into. ServerTeleportal sends a chef that
+        /// touches its trigger from the side its transform.right faces (within m_teleportArc, at most
+        /// 90°), so the entry is the neighbouring cell on that side; the chef comes out at the exit
+        /// portal's TeleportPoint, inside that portal's cell. Cells are measured each time, since a
+        /// portal on a moving part moves.
+        /// </summary>
+        public IEnumerable<Hop> HopsFrom(int x, int z)
+        {
+            foreach (var s in _stations)
+            {
+                if (s.Kind != "portal" || s.Go == null || !s.Go.activeInHierarchy) continue;
+                var portal = s.Go.GetComponent<Teleportal>();
+                var server = s.Go.GetComponent<ServerTeleportal>();
+                if (portal == null || portal.m_exitPortal == null || server == null || !server.enabled) continue;
+                var at = Cell(s.Go.transform.position);
+                var entry = EntryOf(s.Go, at);
+                if (entry[0] != x || entry[1] != z) continue;
+                var exit = Cell(portal.m_exitPortal.transform.position);
+                yield return new Hop { Portal = new Nav.Cell(at[0], at[1]), Exit = new Nav.Cell(exit[0], exit[1]) };
+            }
+        }
+
+        /// <summary>Whether going from one cell to the next is a walk through a portal, and which.</summary>
+        public bool IsHop(Nav.Cell from, Nav.Cell to, out Nav.Cell portal)
+        {
+            foreach (var hop in HopsFrom(from.X, from.Z))
+                if (hop.Exit.X == to.X && hop.Exit.Z == to.Z) { portal = hop.Portal; return true; }
+            portal = default(Nav.Cell);
+            return false;
+        }
+
+        /// <summary>The neighbour of a portal's cell on the side its transform.right faces, along the nearer grid axis.</summary>
+        private int[] EntryOf(GameObject portal, int[] cell)
+        {
+            var ax = (CellCenter(1, 0) - CellCenter(0, 0)).normalized;
+            var az = (CellCenter(0, 1) - CellCenter(0, 0)).normalized;
+            var right = portal.transform.right;
+            float dx = Vector3.Dot(right, ax), dz = Vector3.Dot(right, az);
+            return Mathf.Abs(dx) >= Mathf.Abs(dz) ? new[] { cell[0] + (dx > 0 ? 1 : -1), cell[1] } : new[] { cell[0], cell[1] + (dz > 0 ? 1 : -1) };
         }
 
         /// <summary>The cell's occupant on the level grid, or else on a moving part's grid over that spot.</summary>
@@ -458,6 +514,11 @@ namespace CorticoOvercooked2
                     var node = ing != null ? IngredientNode(ing) : null;
                     so.Str("gives", node != null ? node.name : prefab != null ? CleanName(prefab.name) : null);
                 }
+                if (s.Kind == "portal")
+                {
+                    var exit = s.Go.GetComponent<Teleportal>().m_exitPortal;
+                    if (exit != null) so.Int("to", exit.GetInstanceID());
+                }
                 var fire = s.Go.GetComponent<ServerFlammable>();
                 if (fire != null && fire.OnFire()) so.Bool("onFire", true);
                 var cooker = s.Go.GetComponent<ServerCookingStation>();
@@ -573,6 +634,22 @@ namespace CorticoOvercooked2
                         if (!Nav.EdgeClear(this, reference, new Nav.Cell(at[0], at[1]), new Nav.Cell(x, z))) continue;
                         region[key] = letter;
                         queue.Enqueue(new[] { x, z });
+                    }
+                    // Through a portal the walk goes on from the exit portal's cell to its floor neighbours.
+                    foreach (var hop in HopsFrom(at[0], at[1]))
+                    {
+                        for (int i = 0; i < 4; i++)
+                        {
+                            int x = hop.Exit.X + dx[i], z = hop.Exit.Z + dz[i];
+                            long key = Key(x, z);
+                            if (!InReach(x, z) || region.ContainsKey(key)) continue;
+                            char ch = cells.TryGetValue(key, out var known) ? known : CellChar(x, z);
+                            if (ch == ' ' || ch == '#') continue;
+                            if (!Nav.EdgeClear(this, reference, hop.Exit, new Nav.Cell(x, z))) continue;
+                            cells[key] = ch;
+                            region[key] = letter;
+                            queue.Enqueue(new[] { x, z });
+                        }
                     }
                 }
             }

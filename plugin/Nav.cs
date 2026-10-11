@@ -173,6 +173,14 @@ namespace CorticoOvercooked2
                     previous[key] = Key(at);
                     queue.Enqueue(next);
                 }
+                // A portal's entry cell leads on to the exit portal's cell (the walk itself is in Actor.Walk).
+                foreach (var hop in k.HopsFrom(at.X, at.Z))
+                {
+                    long key = Key(hop.Exit);
+                    if (previous.ContainsKey(key) || blocked.Contains(key)) continue;
+                    previous[key] = Key(at);
+                    queue.Enqueue(hop.Exit);
+                }
             }
             return null;
         }

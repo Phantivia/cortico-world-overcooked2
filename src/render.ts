@@ -113,7 +113,9 @@ export function stationText(st: Station, state: GameState, ctx: RenderCtx): stri
     parts.push(itemText(st.item, ctx));
     const user = state.chefs.find(c => c.using === st.id);
     if (user && st.kind === 'board') parts.push(`${chefName(user, ctx)}在切`);
-  } else if (st.kind !== 'crate' && st.kind !== 'pass' && st.kind !== 'bin' && st.kind !== 'fixture') {
+  } else if (st.kind === 'portal') {
+    if (st.to !== undefined) parts.push(`通往 ${nameOf(st.to, state, ctx)}`);
+  } else if (!['crate', 'pass', 'bin', 'fixture', 'switch', 'terminal'].includes(st.kind)) {
     parts.push('空');
   }
   if (st.kind === 'stove' && st.item && st.active === false && st.item.contents?.length) parts.push('没在加热');

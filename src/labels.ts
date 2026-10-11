@@ -19,6 +19,9 @@ const STATION_PREFIX: Record<string, string> = {
   oven: 'O',
   dispenser: 'Q',
   fixture: 'Z',
+  switch: 'L',
+  portal: 'H',
+  terminal: 'A',
   other: 'Z',
 };
 

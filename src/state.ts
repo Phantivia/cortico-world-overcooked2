@@ -63,6 +63,8 @@ export interface Station {
   active?: boolean;
   /** 水槽里的脏盘数、沥水架或回盘口的盘数。 */
   plates?: number;
+  /** 传送门：出口那个传送门的 id。 */
+  to?: number;
   /** 水槽当前这只盘子的洗涤进度 0..1。 */
   progress?: number;
 }
