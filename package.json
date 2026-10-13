@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "type": "module",
   "description": "Cortico World for Overcooked! 2 local co-op: the bot joins as a second local player through a BepInEx plugin and plays next to the operator. 此乃直播测试验证之后的world，和其他 Persona / 非直播场景的兼容性有待测试。",
+  "author": "Phantivia",
   "license": "MIT",
   "repository": {
     "type": "git",
