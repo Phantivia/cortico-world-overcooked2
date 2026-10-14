@@ -714,12 +714,17 @@ namespace CorticoOvercooked2
         }
 
         private static readonly int PlayersLayer = LayerMask.NameToLayer("Players");
+        /// <summary>
+        /// Stair treads and the ramps in front of them, which chefs walk up with their own gravity
+        /// (Kevin 1's ramps are 53° plates). Floor at any slope.
+        /// </summary>
+        public static readonly int SlopedGroundLayer = LayerMask.NameToLayer("SlopedGround");
 
         /// <summary>
-        /// Floor under a cell centre: the first surface below that faces up, among those a chef
-        /// collides with. Chefs, items and colliders chefs pass through are looked through; kill
-        /// planes and water are triggers and so are never floor. Levels use their own layers for
-        /// floors, so no layer is assumed.
+        /// Floor under a cell centre: the first surface below that faces up or is sloped ground,
+        /// among those a chef collides with. Chefs, items and colliders chefs pass through are
+        /// looked through; kill planes and water are triggers and so are never floor. Levels use
+        /// their own layers for flat floors, so no layer is assumed for those.
         /// </summary>
         public static bool IsFloor(Vector3 center) => FloorHeight(center) != null;
 
@@ -737,7 +742,7 @@ namespace CorticoOvercooked2
                 if (go.GetComponentInParent<PlayerControls>() != null || go.GetComponentInParent<ServerPhysicalAttachment>() != null) continue;
                 if (h.collider.attachedRigidbody != null && !h.collider.attachedRigidbody.isKinematic) continue;
                 if (PlayersLayer >= 0 && Physics.GetIgnoreLayerCollision(PlayersLayer, go.layer)) continue;
-                return h.normal.y > 0.7f ? h.point.y : (float?)null;
+                return h.normal.y > 0.7f || go.layer == SlopedGroundLayer ? h.point.y : (float?)null;
             }
             return null;
         }

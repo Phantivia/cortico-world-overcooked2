@@ -64,7 +64,11 @@ namespace CorticoOvercooked2
 
         private static bool BodyClear(PlayerControls chef, Vector3 at) => BodyBlocker(chef, at) == null;
 
-        /// <summary>The first collider the chef's body would overlap standing at this point, or null.</summary>
+        /// <summary>
+        /// The first collider the chef's body would overlap standing at this point, or null. Sloped
+        /// ground never blocks: on Kevin 1's stairs the middle tread's body reaches the next step's
+        /// ramp, which the chef walks up.
+        /// </summary>
         public static Collider BodyBlocker(PlayerControls chef, Vector3 at)
         {
             var body = chef.GetComponent<Collider>();
@@ -81,7 +85,7 @@ namespace CorticoOvercooked2
                 var other = Overlaps[i];
                 Overlaps[i] = null;
                 if (blocker != null || other == null || other.transform.IsChildOf(chef.transform)) continue;
-                if (Passable(other)) continue;
+                if (Passable(other) || other.gameObject.layer == Kitchen.SlopedGroundLayer) continue;
                 if (Physics.GetIgnoreLayerCollision(body.gameObject.layer, other.gameObject.layer)) continue;
                 blocker = other;
             }
