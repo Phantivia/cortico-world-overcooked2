@@ -1,6 +1,6 @@
 {
   "name": "cortico-world-overcooked2",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "description": "Cortico World for Overcooked! 2 local co-op: the bot joins as a second local player through a BepInEx plugin and plays next to the operator. 此乃直播测试验证之后的world，和其他 Persona / 非直播场景的兼容性有待测试。",
   "author": "Phantivia",
@@ -20,8 +20,9 @@
   "main": "./src/index.ts",
   "cortico": {
     "kind": "world",
-    "api": 5,
-    "displayName": "胡闹厨房 2"
+    "api": 6,
+    "displayName": "胡闹厨房 2",
+    "describe": "describe.json"
   },
   "files": [
     "src",
@@ -29,6 +30,8 @@
     "plugin/*.csproj",
     "docs",
     "README.md",
+    "CHANGELOG.md",
+    "describe.json",
     "LICENSE"
   ],
   "scripts": {
@@ -38,7 +41,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
-    "cortico": "^0.1.5",
+    "cortico": "^0.2.0",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"
