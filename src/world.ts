@@ -10,7 +10,7 @@
  * oc2_arm 盯着一个条件，成立时自动排上一串步骤（triggers.ts），反应不用等 bot 再想一轮。
  */
 import { fileURLToPath } from 'node:url';
-import type { BlobInput, ToolDef, ToolOutcome, TriggerMode, World, WorldConsoleDecl, WorldHost } from 'cortico/core/types.ts';
+import type { BlobInput, ToolDef, ToolOutcome, TriggerMode, World, WorldWebUiDecl, WorldHost } from 'cortico/core/types.ts';
 import { nowIso } from 'cortico/core/util.ts';
 import { BOARD_STEPS } from './boards.ts';
 import { GameBridge, type Reply } from './bridge.ts';
@@ -41,6 +41,78 @@ const LAYOUT_STABLE_MS = 6000;
 const QUEUE_MODES = ['replace', 'append', 'now'] as const;
 /** 空闲提醒的重复间隔是首次间隔的这么多倍。 */
 const IDLE_REPEAT = 3;
+
+const OC2_DO: Omit<ToolDef, 'handler'> = {
+  name: 'oc2_do',
+  description:
+    '让我的厨师按顺序做一串动作，排进任务队列，在后台做，做完或卡住时回报。' +
+    '动作：take 拿起（食材箱、台面、炉灶上的锅、物品）；put 把手里的东西放到或装进目标；serve 上菜到出餐口；chop 切砧板上的东西直到切好；' +
+    'wash 洗水槽里的脏盘子（plates 只数，不写就洗完）；throw 把手里的食材扔向目标；go 走到目标旁或 x,z 格；' +
+    'wait 等 target 到 until（cooked 煮好、chopped 切好、item 上面有东西、empty 空出来、plates 有盘子），或者 until=seconds 等 seconds 秒；' +
+    'use 操作开关；extinguish 拿着灭火器灭目标的火。dash=true 路上冲刺。' +
+    'target 写场景描述里的标签；不写 target 写 find（可加 near、shared），执行到这一步时再从我够得着的里面挑。' +
+    'queue：replace（不写就是它）撤掉还没开始的任务，正在做的做完；append 排到最后；now 叫停正在做的，先做这个。cancel 写任务号，顺带撤掉那几个。',
+  tags: ['act'],
+  parameters: {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      steps: { type: 'array', minItems: 1, maxItems: 30, items: STEP_SCHEMA },
+      queue: { enum: [...QUEUE_MODES], default: 'replace' },
+      cancel: { type: 'array', maxItems: 30, items: { type: 'integer', minimum: 1 } },
+    },
+    required: ['steps'],
+  },
+};
+
+const OC2_ARM: Omit<ToolDef, 'handler'> = {
+  name: 'oc2_arm',
+  description:
+    '盯着一件事：条件成立的那一刻，自动把一串动作排进任务队列，不用等我再想一轮。条件先不成立、再成立才算一次；' +
+    'maxFirings 写最多排几次（不写是 1 次），expiresInSec 写盯多久（不写就盯到这一关结束）。' +
+    'queue 是排上时的排法，不写就是 now：叫停正在做的，先做这串。换关、离开厨房时自动撤掉。steps 的写法和 oc2_do 一样。',
+  tags: ['act'],
+  parameters: {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      when: CONDITION_SCHEMA,
+      steps: { type: 'array', minItems: 1, maxItems: 30, items: STEP_SCHEMA },
+      queue: { enum: [...QUEUE_MODES], default: 'now' },
+      maxFirings: { type: 'integer', minimum: 1, maximum: 16 },
+      expiresInSec: { type: 'integer', minimum: 1, maximum: 600 },
+    },
+    required: ['when', 'steps'],
+  },
+};
+
+const OC2_STOP: Omit<ToolDef, 'handler'> = {
+  name: 'oc2_stop',
+  description: '写 taskId 只撤掉那个任务（正在做的就叫停）；写 watchId 撤掉那件盯着的事；都不写就叫停全部任务、撤掉全部盯着的事，厨师停下、松开所有按键。',
+  tags: ['act'],
+  parameters: {
+    type: 'object',
+    additionalProperties: false,
+    properties: { taskId: { type: 'integer', minimum: 1 }, watchId: { type: 'integer', minimum: 1 } },
+  },
+};
+
+const OC2_LOOK: Omit<ToolDef, 'handler'> = {
+  name: 'oc2_look',
+  description: '看一眼游戏画面（截图）和完整的厨房现状（含地图）。',
+  tags: ['read', 'snapshot'],
+  parameters: { type: 'object', additionalProperties: false, properties: {} },
+};
+
+const OC2_JOIN: Omit<ToolDef, 'handler'> = {
+  name: 'oc2_join',
+  description: '让我作为本地玩家加入（只能在主菜单）；已加入时什么也不做。',
+  tags: ['act'],
+  parameters: { type: 'object', additionalProperties: false, properties: {} },
+};
+
+/** 实例的 tools() 按配置给 oc2_do 补一句、设 endsTurn，其余照原样。 */
+export const OVERCOOKED2_TOOL_DECLS: ReadonlyArray<Omit<ToolDef, 'handler'>> = [OC2_DO, OC2_ARM, OC2_STOP, OC2_LOOK, OC2_JOIN];
 
 export interface WorldOptions {
   cfg: Overcooked2ConfigSection;
@@ -136,7 +208,7 @@ export class Overcooked2World implements World {
     return s.joined ? '游戏已连接，你已作为本地玩家加入。' : '游戏已连接，你还没作为本地玩家加入（主菜单时会自动加入）。';
   }
 
-  console(): WorldConsoleDecl {
+  webUi(): WorldWebUiDecl {
     const s = this.state;
     return {
       label: '胡闹厨房 2',
@@ -180,74 +252,16 @@ export class Overcooked2World implements World {
   tools(): ToolDef[] {
     return [
       {
-        name: 'oc2_do',
-        description:
-          '让我的厨师按顺序做一串动作，排进任务队列，在后台做，做完或卡住时回报。' +
-          '动作：take 拿起（食材箱、台面、炉灶上的锅、物品）；put 把手里的东西放到或装进目标；serve 上菜到出餐口；chop 切砧板上的东西直到切好；' +
-          'wash 洗水槽里的脏盘子（plates 只数，不写就洗完）；throw 把手里的食材扔向目标；go 走到目标旁或 x,z 格；' +
-          'wait 等 target 到 until（cooked 煮好、chopped 切好、item 上面有东西、empty 空出来、plates 有盘子），或者 until=seconds 等 seconds 秒；' +
-          'use 操作开关；extinguish 拿着灭火器灭目标的火。dash=true 路上冲刺。' +
-          'target 写场景描述里的标签；不写 target 写 find（可加 near、shared），执行到这一步时再从我够得着的里面挑。' +
-          'queue：replace（不写就是它）撤掉还没开始的任务，正在做的做完；append 排到最后；now 叫停正在做的，先做这个。cancel 写任务号，顺带撤掉那几个。' +
-          (this.cfg.endTurnOnDo ? '调用后这一轮就结束：要说的话、要盯的事写在同一条回复里；回执和任务结果随下一批消息一起读到。' : ''),
-        tags: ['act'],
+        ...OC2_DO,
+        description: OC2_DO.description + (this.cfg.endTurnOnDo ? '调用后这一轮就结束：要说的话、要盯的事写在同一条回复里；回执和任务结果随下一批消息一起读到。' : ''),
         endsTurn: this.cfg.endTurnOnDo,
-        parameters: {
-          type: 'object',
-          additionalProperties: false,
-          properties: {
-            steps: { type: 'array', minItems: 1, maxItems: 30, items: STEP_SCHEMA },
-            queue: { enum: [...QUEUE_MODES], default: 'replace' },
-            cancel: { type: 'array', maxItems: 30, items: { type: 'integer', minimum: 1 } },
-          },
-          required: ['steps'],
-        },
         handler: async args => this.doTool(args),
       },
+      { ...OC2_ARM, handler: async args => this.armTool(args) },
+      { ...OC2_STOP, handler: async args => this.stopTool(args) },
+      { ...OC2_LOOK, handler: async () => this.lookTool() },
       {
-        name: 'oc2_arm',
-        description:
-          '盯着一件事：条件成立的那一刻，自动把一串动作排进任务队列，不用等我再想一轮。条件先不成立、再成立才算一次；' +
-          'maxFirings 写最多排几次（不写是 1 次），expiresInSec 写盯多久（不写就盯到这一关结束）。' +
-          'queue 是排上时的排法，不写就是 now：叫停正在做的，先做这串。换关、离开厨房时自动撤掉。steps 的写法和 oc2_do 一样。',
-        tags: ['act'],
-        parameters: {
-          type: 'object',
-          additionalProperties: false,
-          properties: {
-            when: CONDITION_SCHEMA,
-            steps: { type: 'array', minItems: 1, maxItems: 30, items: STEP_SCHEMA },
-            queue: { enum: [...QUEUE_MODES], default: 'now' },
-            maxFirings: { type: 'integer', minimum: 1, maximum: 16 },
-            expiresInSec: { type: 'integer', minimum: 1, maximum: 600 },
-          },
-          required: ['when', 'steps'],
-        },
-        handler: async args => this.armTool(args),
-      },
-      {
-        name: 'oc2_stop',
-        description: '写 taskId 只撤掉那个任务（正在做的就叫停）；写 watchId 撤掉那件盯着的事；都不写就叫停全部任务、撤掉全部盯着的事，厨师停下、松开所有按键。',
-        tags: ['act'],
-        parameters: {
-          type: 'object',
-          additionalProperties: false,
-          properties: { taskId: { type: 'integer', minimum: 1 }, watchId: { type: 'integer', minimum: 1 } },
-        },
-        handler: async args => this.stopTool(args),
-      },
-      {
-        name: 'oc2_look',
-        description: '看一眼游戏画面（截图）和完整的厨房现状（含地图）。',
-        tags: ['read', 'snapshot'],
-        parameters: { type: 'object', additionalProperties: false, properties: {} },
-        handler: async () => this.lookTool(),
-      },
-      {
-        name: 'oc2_join',
-        description: '让我作为本地玩家加入（只能在主菜单）；已加入时什么也不做。',
-        tags: ['act'],
-        parameters: { type: 'object', additionalProperties: false, properties: {} },
+        ...OC2_JOIN,
         handler: async () => {
           const r = await this.bridge.request({ op: 'join' }, REQUEST_TIMEOUT_MS);
           return r.ok ? { text: '已加入（或本来就在）。' } : { text: `没能加入：${r.why}`, failed: true };
